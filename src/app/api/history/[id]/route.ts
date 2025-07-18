@@ -1,47 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '@/lib/prisma'; // or wherever your prisma is
 
-// DELETE handler - deletes a single history item by id
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const { id } = params;
+  const parsedId = parseInt(id);
+
+  if (isNaN(parsedId)) {
+    return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
+  }
+
   try {
-    const id = parseInt(params.id);
-
-    if (isNaN(id)) {
-      return NextResponse.json(
-        { error: 'Invalid ID format' },
-        { status: 400 }
-      );
-    }
-
-    // Check if the record exists
     const existingRecord = await prisma.history.findUnique({
-      where: { id },
+      where: { id: parsedId },
     });
 
     if (!existingRecord) {
-      return NextResponse.json(
-        { error: 'History record not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
-    // Delete the record
-    await prisma.history.delete({
-      where: { id },
-    });
+    await prisma.history.delete({ where: { id: parsedId } });
 
-    return NextResponse.json(
-      { message: 'History record deleted successfully' },
-      { status: 200 }
-    );
+    return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
   } catch (error) {
     console.error('Error deleting history record:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete history record' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to delete history record' }, { status: 500 });
   }
-} 
+}

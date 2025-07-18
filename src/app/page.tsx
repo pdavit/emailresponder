@@ -28,7 +28,7 @@ export default function HomePage() {
             Start Your 7-Day Free Trial of EmailResponder
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-400 mb-8 max-w-2xl mx-auto">
-            AI-powered assistant that instantly writes professional emails in many languages. Change tone, rewrite content, and reply faster — in seconds.
+            AI-powered assistant that instantly writes professional emails. Change tone, rewrite content, and reply faster — in seconds.
           </p>
           <a
             href="https://buy.stripe.com/28E5kD6EFbEwgeA8ng"
