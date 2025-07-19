@@ -9,13 +9,16 @@ const compat = new FlatCompat({
   baseDirectory: __dirname,
 });
 
+/** @type {import("eslint").Linter.FlatConfig[]} */
 const eslintConfig = [
-  // ✅ Ignore auto-generated Prisma files
   {
-    ignores: ["src/generated/**"],
+    ignores: ["src/generated/**/*"], // ✅ THIS MUST BE FIRST
   },
-  // ✅ Then apply ESLint rules
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...compat.extends(
+    "next/core-web-vitals",
+    "next",
+    "next/typescript"
+  ),
 ];
 
 export default eslintConfig;
