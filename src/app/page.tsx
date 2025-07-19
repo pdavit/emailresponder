@@ -79,7 +79,7 @@ export default function HomePage() {
             AI-powered assistant that instantly writes professional emails. Change tone, rewrite content, and reply faster — in seconds.
           </p>
           <a
-            href="https://buy.stripe.com/28E5kD6EFbEwgeA8ng"
+            href="https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-8 rounded-lg transition-colors duration-200 text-lg mb-4"
