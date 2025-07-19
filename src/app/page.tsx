@@ -19,16 +19,17 @@ export default function HomePage() {
         if (data.hasActiveSubscription) {
           router.push('/emailresponder');
         } else {
-          router.push('/subscribe');
+          // Redirect to Stripe checkout
+          window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
         }
       } else {
-        // If there's an error, redirect to subscribe page as fallback
-        router.push('/subscribe');
+        // If there's an error, redirect to Stripe checkout as fallback
+        window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
       }
     } catch (error) {
       console.error('Error checking subscription status:', error);
-      // On error, redirect to subscribe page as fallback
-      router.push('/subscribe');
+      // On error, redirect to Stripe checkout as fallback
+      window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
     } finally {
       setIsChecking(false);
     }

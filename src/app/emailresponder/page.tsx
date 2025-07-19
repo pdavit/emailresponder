@@ -52,10 +52,47 @@ export default function EmailResponderPage() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null);
 
-  // Load history on component mount
+  // Subscription check state
+  const [isCheckingSubscription, setIsCheckingSubscription] = useState(true);
+
+  // Check subscription on component mount
   useEffect(() => {
-    loadHistory();
+    checkSubscription();
   }, []);
+
+  const checkSubscription = async () => {
+    try {
+      const response = await fetch('/api/subscription-status');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (!data.hasActiveSubscription) {
+          // Redirect to Stripe checkout
+          window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
+          return;
+        }
+      } else {
+        // If there's an error, redirect to Stripe checkout as fallback
+        window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      // On error, redirect to Stripe checkout as fallback
+      window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
+      return;
+    } finally {
+      setIsCheckingSubscription(false);
+    }
+  };
+
+  // Load history on component mount (only after subscription check)
+  useEffect(() => {
+    if (!isCheckingSubscription) {
+      loadHistory();
+    }
+  }, [isCheckingSubscription]);
 
   const loadHistory = async () => {
     setIsLoadingHistory(true);
@@ -226,6 +263,18 @@ export default function EmailResponderPage() {
     item.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.originalEmail.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // Show loading state while checking subscription
+  if (isCheckingSubscription) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Checking subscription...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
