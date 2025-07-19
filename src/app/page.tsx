@@ -1,9 +1,39 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function HomePage() {
+  const router = useRouter();
+  const [isChecking, setIsChecking] = useState(false);
+
+  const handleGetStarted = async () => {
+    setIsChecking(true);
+    
+    try {
+      const response = await fetch('/api/subscription-status');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.hasActiveSubscription) {
+          router.push('/emailresponder');
+        } else {
+          router.push('/subscribe');
+        }
+      } else {
+        // If there's an error, redirect to subscribe page as fallback
+        router.push('/subscribe');
+      }
+    } catch (error) {
+      console.error('Error checking subscription status:', error);
+      // On error, redirect to subscribe page as fallback
+      router.push('/subscribe');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Main hero section */}
@@ -17,12 +47,20 @@ export default function HomePage() {
           </p>
           
           <div className="space-y-4">
-            <Link
-              href="/emailresponder"
-              className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200"
+            <button
+              onClick={handleGetStarted}
+              disabled={isChecking}
+              className="inline-block bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200 flex items-center mx-auto"
             >
-              Get Started
-            </Link>
+              {isChecking ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Checking...
+                </>
+              ) : (
+                'Get Started'
+              )}
+            </button>
           </div>
         </div>
       </div>
