@@ -2,7 +2,7 @@ import Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-08-16',
+  apiVersion: '2025-06-30.basil',
 });
 
 export interface SubscriptionStatus {
@@ -37,9 +37,9 @@ export async function checkSubscriptionStatus(userId: string): Promise<Subscript
 
     return {
       hasActiveSubscription: isActive,
-      subscriptionStatus: user.subscriptionStatus,
-      subscriptionEndDate: user.subscriptionEndDate,
-      stripeCustomerId: user.stripeCustomerId,
+      subscriptionStatus: user.subscriptionStatus || undefined,
+      subscriptionEndDate: user.subscriptionEndDate || undefined,
+      stripeCustomerId: user.stripeCustomerId || undefined,
     };
   } catch (error) {
     console.error('Error checking subscription status:', error);
@@ -54,17 +54,11 @@ export async function verifyStripeSubscription(stripeCustomerId: string): Promis
   try {
     const subscriptions = await stripe.subscriptions.list({
       customer: stripeCustomerId,
-      status: 'all',
+      status: 'active',
       limit: 1,
     });
 
-    const activeSub = subscriptions.data.find(
-      (sub) =>
-        sub.status === 'active' &&
-        (!sub.cancel_at_period_end || new Date(sub.current_period_end * 1000) > new Date())
-    );
-
-    return !!activeSub;
+    return subscriptions.data.length > 0;
   } catch (error) {
     console.error('Error verifying Stripe subscription:', error);
     return false;

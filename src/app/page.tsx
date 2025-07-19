@@ -21,7 +21,7 @@ export default function HomePage() {
       } else {
         setSetupMessage('Failed to create demo user. Please try again.');
       }
-    } catch (error) {
+    } catch {
       setSetupMessage('Error setting up demo user. Please try again.');
     } finally {
       setIsSettingUp(false);

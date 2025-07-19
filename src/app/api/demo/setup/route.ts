@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { updateUserSubscription } from '@/lib/subscription';
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
     // Create a demo user with active subscription
     const demoUserId = 'demo-user-id';
