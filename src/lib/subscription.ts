@@ -1,0 +1,107 @@
+import Stripe from 'stripe';
+import { prisma } from '@/lib/prisma';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2023-08-16',
+});
+
+export interface SubscriptionStatus {
+  hasActiveSubscription: boolean;
+  subscriptionStatus?: string;
+  subscriptionEndDate?: Date;
+  stripeCustomerId?: string;
+}
+
+/**
+ * Check if a user has an active Stripe subscription
+ */
+export async function checkSubscriptionStatus(userId: string): Promise<SubscriptionStatus> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        stripeCustomerId: true,
+        subscriptionStatus: true,
+        subscriptionEndDate: true,
+      },
+    });
+
+    if (!user) {
+      return { hasActiveSubscription: false };
+    }
+
+    const isActive =
+      user.subscriptionStatus === 'active' &&
+      (!user.subscriptionEndDate || user.subscriptionEndDate > new Date());
+
+    return {
+      hasActiveSubscription: isActive,
+      subscriptionStatus: user.subscriptionStatus,
+      subscriptionEndDate: user.subscriptionEndDate,
+      stripeCustomerId: user.stripeCustomerId,
+    };
+  } catch (error) {
+    console.error('Error checking subscription status:', error);
+    return { hasActiveSubscription: false };
+  }
+}
+
+/**
+ * ✅ Real Stripe API check – double verify if a Stripe customer has an active subscription
+ */
+export async function verifyStripeSubscription(stripeCustomerId: string): Promise<boolean> {
+  try {
+    const subscriptions = await stripe.subscriptions.list({
+      customer: stripeCustomerId,
+      status: 'all',
+      limit: 1,
+    });
+
+    const activeSub = subscriptions.data.find(
+      (sub) =>
+        sub.status === 'active' &&
+        (!sub.cancel_at_period_end || new Date(sub.current_period_end * 1000) > new Date())
+    );
+
+    return !!activeSub;
+  } catch (error) {
+    console.error('Error verifying Stripe subscription:', error);
+    return false;
+  }
+}
+
+/**
+ * Create or update user subscription information in the database
+ */
+export async function updateUserSubscription(
+  userId: string,
+  stripeCustomerId: string,
+  subscriptionId: string,
+  subscriptionStatus: string,
+  subscriptionEndDate: Date
+) {
+  try {
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {
+        stripeCustomerId,
+        subscriptionId,
+        subscriptionStatus,
+        subscriptionEndDate,
+        updatedAt: new Date(),
+      },
+      create: {
+        id: userId,
+        email: `user-${userId}@example.com`, // Replace with your actual auth email
+        stripeCustomerId,
+        subscriptionId,
+        subscriptionStatus,
+        subscriptionEndDate,
+      },
+    });
+  } catch (error) {
+    console.error('Error updating user subscription:', error);
+    throw error;
+  }
+}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { prisma } from '@/lib/prisma';
+import { checkSubscriptionStatus } from '@/lib/subscription';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -9,6 +10,17 @@ const openai = new OpenAI({
 
 export async function POST(request: NextRequest) {
   try {
+    // Check subscription status first
+    const mockUserId = 'demo-user-id'; // In real app, get from auth
+    const subscriptionStatus = await checkSubscriptionStatus(mockUserId);
+    
+    if (!subscriptionStatus.hasActiveSubscription) {
+      return NextResponse.json(
+        { error: 'Active subscription required' },
+        { status: 403 }
+      );
+    }
+
     // Parse the request body
     const { subject, originalEmail, language, tone } = await request.json();
 
@@ -70,6 +82,7 @@ export async function POST(request: NextRequest) {
           reply,
           language,
           tone,
+          userId: mockUserId, // Associate with user
         },
       });
     } catch (dbError) {

@@ -1,6 +1,33 @@
+'use client';
+
 import Link from 'next/link';
+import { useState } from 'react';
 
 export default function HomePage() {
+  const [isSettingUp, setIsSettingUp] = useState(false);
+  const [setupMessage, setSetupMessage] = useState('');
+
+  const setupDemoUser = async () => {
+    setIsSettingUp(true);
+    setSetupMessage('');
+    
+    try {
+      const response = await fetch('/api/demo/setup', {
+        method: 'POST',
+      });
+      
+      if (response.ok) {
+        setSetupMessage('Demo user created successfully! You can now access the Email Responder.');
+      } else {
+        setSetupMessage('Failed to create demo user. Please try again.');
+      }
+    } catch (error) {
+      setSetupMessage('Error setting up demo user. Please try again.');
+    } finally {
+      setIsSettingUp(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Main hero section */}
@@ -12,12 +39,33 @@ export default function HomePage() {
           <p className="text-xl text-gray-600 dark:text-gray-400 mb-8">
             AI-Powered Email Reply Generator
           </p>
-          <Link
-            href="/emailresponder"
-            className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200"
-          >
-            Get Started
-          </Link>
+          
+          <div className="space-y-4">
+            <Link
+              href="/emailresponder"
+              className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200"
+            >
+              Get Started
+            </Link>
+            
+            <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Demo: Set up a test user with active subscription
+              </p>
+              <button
+                onClick={setupDemoUser}
+                disabled={isSettingUp}
+                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200 text-sm"
+              >
+                {isSettingUp ? 'Setting up...' : 'Setup Demo User'}
+              </button>
+              {setupMessage && (
+                <p className="mt-2 text-sm text-green-600 dark:text-green-400">
+                  {setupMessage}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

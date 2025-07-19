@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma'; // or wherever your prisma is
+import { prisma } from '@/lib/prisma';
+import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function DELETE(
   request: NextRequest,
@@ -13,8 +14,22 @@ export async function DELETE(
   }
 
   try {
+    // Check subscription status first
+    const mockUserId = 'demo-user-id'; // In real app, get from auth
+    const subscriptionStatus = await checkSubscriptionStatus(mockUserId);
+    
+    if (!subscriptionStatus.hasActiveSubscription) {
+      return NextResponse.json(
+        { error: 'Active subscription required' },
+        { status: 403 }
+      );
+    }
+
     const existingRecord = await prisma.history.findUnique({
-      where: { id: parsedId },
+      where: { 
+        id: parsedId,
+        userId: mockUserId, // Only allow deletion of user's own records
+      },
     });
 
     if (!existingRecord) {

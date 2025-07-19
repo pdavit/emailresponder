@@ -9,6 +9,18 @@ generator client {
   output   = "../src/generated/prisma"
 }
 
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  stripeCustomerId String?  @unique
+  subscriptionId  String?
+  subscriptionStatus String? // 'active', 'canceled', 'past_due', 'unpaid', etc.
+  subscriptionEndDate DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  history         History[]
+}
+
 model History {
   id            Int      @id @default(autoincrement())
   subject       String
@@ -17,6 +29,8 @@ model History {
   language      String
   tone          String
   createdAt     DateTime @default(now())
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 datasource db {
