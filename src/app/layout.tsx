@@ -1,5 +1,10 @@
 import type { Metadata } from "next";
-import { ClerkProvider, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
+import {
+  ClerkProvider,
+  SignedIn,
+  SignedOut,
+  UserButton,
+} from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -30,9 +35,13 @@ export default function RootLayout({
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50 dark:bg-gray-900`}
         >
-          <header className="w-full px-4 py-3 flex justify-end items-center border-b border-gray-200 dark:border-gray-800">
+          <header className="w-full px-4 py-3 flex justify-end items-center border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
             <SignedIn>
-              <UserButton afterSignOutUrl="/" />
+              <div className="bg-gradient-to-r from-blue-500 to-teal-400 p-[2px] rounded-full">
+                <div className="bg-white dark:bg-gray-950 rounded-full p-1 shadow-md">
+                  <UserButton afterSignOutUrl="/" />
+                </div>
+              </div>
             </SignedIn>
           </header>
 
