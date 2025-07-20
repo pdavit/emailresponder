@@ -1,13 +1,19 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function GET() {
   try {
-    // For demo purposes, we'll use a mock user ID
-    // In a real app, you'd get this from your auth system (e.g., session, JWT, etc.)
-    const mockUserId = 'demo-user-id';
+    const { userId } = await auth();
     
-    const subscriptionStatus = await checkSubscriptionStatus(mockUserId);
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+    
+    const subscriptionStatus = await checkSubscriptionStatus(userId);
 
     return NextResponse.json({
       hasActiveSubscription: subscriptionStatus.hasActiveSubscription,

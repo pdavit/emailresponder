@@ -1,10 +1,19 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { updateUserSubscription } from '@/lib/subscription';
 
 export async function POST() {
   try {
-    // Create a demo user with active subscription
-    const demoUserId = 'demo-user-id';
+    const { userId } = await auth();
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    // Create a demo subscription for the authenticated user
     const mockStripeCustomerId = 'cus_demo123456';
     const mockSubscriptionId = 'sub_demo123456';
     
@@ -13,7 +22,7 @@ export async function POST() {
     subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 1);
 
     await updateUserSubscription(
-      demoUserId,
+      userId,
       mockStripeCustomerId,
       mockSubscriptionId,
       'active',
@@ -22,16 +31,16 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: 'Demo user created with active subscription',
-      userId: demoUserId,
+      message: 'Demo subscription created successfully',
+      userId: userId,
       subscriptionStatus: 'active',
       subscriptionEndDate: subscriptionEndDate.toISOString(),
     });
 
   } catch (error) {
-    console.error('Error setting up demo user:', error);
+    console.error('Error setting up demo subscription:', error);
     return NextResponse.json(
-      { error: 'Failed to setup demo user' },
+      { error: 'Failed to setup demo subscription' },
       { status: 500 }
     );
   }

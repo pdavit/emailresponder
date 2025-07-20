@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/prisma';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
@@ -6,8 +7,16 @@ import { checkSubscriptionStatus } from '@/lib/subscription';
 export async function GET() {
   try {
     // Check subscription status first
-    const mockUserId = 'demo-user-id'; // In real app, get from auth
-    const subscriptionStatus = await checkSubscriptionStatus(mockUserId);
+    const { userId } = await auth();
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+    
+    const subscriptionStatus = await checkSubscriptionStatus(userId);
     
     if (!subscriptionStatus.hasActiveSubscription) {
       return NextResponse.json(
@@ -18,7 +27,7 @@ export async function GET() {
 
     const history = await prisma.history.findMany({
       where: {
-        userId: mockUserId, // Only show user's own history
+        userId: userId, // Only show user's own history
       },
       orderBy: {
         createdAt: 'desc',
@@ -39,8 +48,16 @@ export async function GET() {
 export async function DELETE() {
   try {
     // Check subscription status first
-    const mockUserId = 'demo-user-id'; // In real app, get from auth
-    const subscriptionStatus = await checkSubscriptionStatus(mockUserId);
+    const { userId } = await auth();
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+    
+    const subscriptionStatus = await checkSubscriptionStatus(userId);
     
     if (!subscriptionStatus.hasActiveSubscription) {
       return NextResponse.json(
@@ -51,7 +68,7 @@ export async function DELETE() {
 
     await prisma.history.deleteMany({
       where: {
-        userId: mockUserId, // Only delete user's own history
+        userId: userId, // Only delete user's own history
       },
     });
     

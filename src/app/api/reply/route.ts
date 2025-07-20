@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import OpenAI from 'openai';
 import { prisma } from '@/lib/prisma';
 import { checkSubscriptionStatus } from '@/lib/subscription';
@@ -11,8 +12,16 @@ const openai = new OpenAI({
 export async function POST(request: NextRequest) {
   try {
     // Check subscription status first
-    const mockUserId = 'demo-user-id'; // In real app, get from auth
-    const subscriptionStatus = await checkSubscriptionStatus(mockUserId);
+    const { userId } = await auth();
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+    
+    const subscriptionStatus = await checkSubscriptionStatus(userId);
     
     if (!subscriptionStatus.hasActiveSubscription) {
       return NextResponse.json(
@@ -82,7 +91,7 @@ export async function POST(request: NextRequest) {
           reply,
           language,
           tone,
-          userId: mockUserId, // Associate with user
+          userId: userId, // Associate with user
         },
       });
     } catch (dbError) {

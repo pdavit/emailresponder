@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ClerkProvider, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -14,21 +15,30 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "EmailResponder - AI-Powered Email Reply Generator",
-  description: "Generate professional email replies with AI assistance. Support for multiple languages and tones.",
+  description:
+    "Generate professional email replies with AI assistance. Support for multiple languages and tones.",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en" className="dark">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50 dark:bg-gray-900`}
-      >
-        {children}
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className="dark">
+        <body
+          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50 dark:bg-gray-900`}
+        >
+          <header className="w-full px-4 py-3 flex justify-end items-center border-b border-gray-200 dark:border-gray-800">
+            <SignedIn>
+              <UserButton afterSignOutUrl="/" />
+            </SignedIn>
+          </header>
+
+          <main>{children}</main>
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }
