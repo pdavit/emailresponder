@@ -7,7 +7,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "EmailResponder - AI-Powered Email Reply Generator",
+  title: "EmailResponder – AI-Powered Email Reply Generator",
   description: "Generate professional email replies with AI assistance. Support for multiple languages and tones.",
 };
 
@@ -34,7 +34,8 @@ export default function RootLayout({
           </SignedIn>
 
           <SignedOut>
-            <main>{children}</main> {/* this will be just sign-in/up */}
+            {/* Only show the sign-in/sign-up content */}
+            <main>{children}</main>
           </SignedOut>
         </body>
       </html>
