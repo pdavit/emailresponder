@@ -10,7 +10,7 @@ export default function HomePage() {
 
   const handleGetStarted = () => {
     if (isSignedIn) {
-      router.push('/demo');
+      router.push('/emailresponder');
     } else {
       router.push('/sign-in');
     }
