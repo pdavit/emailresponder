@@ -1,49 +1,37 @@
-import { authMiddleware } from "@clerk/nextjs";
+// middleware.ts
+import { withClerkMiddleware, getAuth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export default authMiddleware({
-  // Routes that can be accessed while signed out
-  publicRoutes: [
-    '/',
-    '/subscribe',
-    '/api/subscribe',
-    '/api/demo/setup',
-    '/api/webhook',
-    '/api/checkout',
-    '/sign-in',
-    '/sign-up',
-  ],
+export default withClerkMiddleware((req: NextRequest) => {
+  const { userId } = getAuth(req);
+  const url = req.nextUrl.clone();
+  const publicRoutes = [
+    "/",
+    "/subscribe",
+    "/api/subscribe",
+    "/api/demo/setup",
+    "/api/webhook",
+    "/api/checkout",
+    "/sign-in",
+    "/sign-up",
+  ];
 
-  // Routes that can always be accessed (no auth required)
-  ignoredRoutes: [
-    '/api/webhook',
-  ],
-
-  // Redirect unauthenticated users to sign-in
-  afterAuth(auth, req: NextRequest) {
-    if (!auth.userId && !auth.isPublicRoute) {
-      const signInUrl = new URL('/sign-in', req.url);
-      signInUrl.searchParams.set('redirect_url', req.url);
-      return Response.redirect(signInUrl);
-    }
-
-    // Allow authenticated users to access protected routes
-    if (auth.userId && !auth.isPublicRoute) {
-      return;
-    }
-
-    // Allow access to public routes
-    return;
+  // Allow access to public routes
+  if (publicRoutes.includes(url.pathname)) {
+    return NextResponse.next();
   }
+
+  // Redirect to sign-in if user is not authenticated
+  if (!userId) {
+    url.pathname = "/sign-in";
+    url.searchParams.set("redirect_url", req.nextUrl.pathname);
+    return NextResponse.redirect(url);
+  }
+
+  return NextResponse.next();
 });
 
 export const config = {
-  matcher: [
-    // Match all request paths except for:
-    // - _next (Next.js internals)
-    // - static files
-    // - favicon
-    // - public folder
-    '/((?!_next|static|favicon.ico|public).*)',
-  ],
+  matcher: ["/((?!_next|.*\\..*).*)"], // Match all except _next/static files
 };
