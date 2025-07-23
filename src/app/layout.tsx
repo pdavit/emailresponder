@@ -24,7 +24,6 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50 dark:bg-gray-900`}
         >
           <ErrorBoundary>
-            <SignedIn>
               <header className="w-full px-4 py-3 flex justify-between items-center border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
                 <div className="flex items-center space-x-2">
                   <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
@@ -34,13 +33,14 @@ export default function RootLayout({
                     EmailResponder
                   </span>
                 </div>
+               <SignedIn>
                 <div className="bg-gradient-to-r from-blue-500 to-teal-400 p-[2px] rounded-full">
                   <div className="bg-white dark:bg-gray-950 rounded-full p-1 shadow-md">
                     <UserButton afterSignOutUrl="/" />
                   </div>
                 </div>
+               </SignedIn>
               </header>
-            </SignedIn>
             <main>{children}</main>
           </ErrorBoundary>
         </body>
