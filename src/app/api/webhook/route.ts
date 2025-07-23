@@ -1,7 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import type { Invoice } from 'stripe';
 import { updateUserSubscription } from '@/lib/subscription';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -103,7 +102,7 @@ export async function POST(req: NextRequest) {
         console.log('❌ Payment failed:', invoice.id);
         
         // Update subscription status to past_due
-        const subscriptionId = (invoice as any).subscription;
+       const subscriptionId = (invoice as unknown as { subscription: string }).subscription;
         if (subscriptionId) {
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
           const customer = await stripe.customers.retrieve(subscription.customer as string);
