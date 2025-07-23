@@ -1,7 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { prisma } from '@/lib/prisma';
 import { updateUserSubscription } from '@/lib/subscription';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -41,12 +40,14 @@ export async function POST(req: NextRequest) {
           const userId = session.metadata?.userId || (customer as Stripe.Customer).email;
           
           if (userId) {
+            // Stripe API 2025-03-31+ deprecates subscription.current_period_end; use items.data[0].current_period_end
+            const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
             await updateUserSubscription(
               userId,
               session.customer as string,
               session.subscription as string,
               subscription.status,
-              new Date((subscription as any).current_period_end * 1000)
+              new Date((currentPeriodEnd ?? 0) * 1000)
             );
           }
         }
@@ -63,12 +64,13 @@ export async function POST(req: NextRequest) {
         const userId = (customer as Stripe.Customer).email; // Use email as user ID for now
         
         if (userId) {
+          const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
           await updateUserSubscription(
             userId,
             subscription.customer as string,
             subscription.id,
             subscription.status,
-            new Date((subscription as any).current_period_end * 1000)
+            new Date((currentPeriodEnd ?? 0) * 1000)
           );
         }
         break;
@@ -83,12 +85,13 @@ export async function POST(req: NextRequest) {
         const userId = (customer as Stripe.Customer).email;
         
         if (userId) {
+          const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
           await updateUserSubscription(
             userId,
             subscription.customer as string,
             subscription.id,
             'canceled',
-            new Date((subscription as any).current_period_end * 1000)
+            new Date((currentPeriodEnd ?? 0) * 1000)
           );
         }
         break;
@@ -106,12 +109,13 @@ export async function POST(req: NextRequest) {
           const userId = (customer as Stripe.Customer).email;
           
           if (userId) {
+            const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
             await updateUserSubscription(
               userId,
               subscription.customer as string,
               subscription.id,
               subscription.status,
-              new Date((subscription as any).current_period_end * 1000)
+              new Date((currentPeriodEnd ?? 0) * 1000)
             );
           }
         }
