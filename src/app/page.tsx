@@ -18,30 +18,6 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
-      {/* Navigation */}
-      <nav className="container mx-auto px-4 py-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">ER</span>
-            </div>
-            <span className="text-xl font-bold text-gray-900 dark:text-white">EmailResponder</span>
-          </div>
-          <div>
-            {isSignedIn ? (
-              <UserButton afterSignOutUrl="/" />
-            ) : (
-              <a
-                href="/sign-in"
-                className="px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
-              >
-                Sign In
-              </a>
-            )}
-          </div>
-        </div>
-      </nav>
-
       {/* Hero Section */}
       <div className="container mx-auto px-4 py-16">
         <div className="text-center max-w-4xl mx-auto">
