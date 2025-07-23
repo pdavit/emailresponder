@@ -54,6 +54,7 @@ export default function EmailResponderPage() {
 
   // Subscription check state
   const [isCheckingSubscription, setIsCheckingSubscription] = useState(true);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
 
   // Check subscription on component mount
   useEffect(() => {
@@ -62,6 +63,7 @@ export default function EmailResponderPage() {
 
   const checkSubscription = async () => {
     try {
+      setSubscriptionError(null);
       const response = await fetch('/api/subscription-status');
       
       if (response.ok) {
@@ -79,6 +81,7 @@ export default function EmailResponderPage() {
       }
     } catch (error) {
       console.error('Error checking subscription:', error);
+      setSubscriptionError('Failed to check subscription status');
       // On error, redirect to Stripe checkout as fallback
       window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
       return;
@@ -134,7 +137,8 @@ export default function EmailResponderPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate reply');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to generate reply');
       }
 
       const data = await response.json();
@@ -144,7 +148,7 @@ export default function EmailResponderPage() {
       await loadHistory();
     } catch (error) {
       console.error('Error generating reply:', error);
-      alert('Failed to generate reply. Please try again.');
+      alert(error instanceof Error ? error.message : 'Failed to generate reply. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -245,7 +249,8 @@ export default function EmailResponderPage() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {    year: 'numeric',
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -271,6 +276,29 @@ export default function EmailResponderPage() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600 dark:text-gray-400">Checking subscription...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state if subscription check failed
+  if (subscriptionError) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-600 dark:text-red-400 mb-4">
+            <svg className="h-12 w-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">Subscription Error</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">{subscriptionError}</p>
+          <button
+            onClick={checkSubscription}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );
@@ -448,86 +476,83 @@ export default function EmailResponderPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Input Form */}
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-                Email Details
-              </h2>
-              
-              {/* Subject Input */}
-              <div className="mb-4">
-                <label htmlFor="subject" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+            <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
+              Email Details
+            </h2>
+            
+            <div className="space-y-6">
+              {/* Subject */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Subject
                 </label>
                 <input
                   type="text"
-                  id="subject"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   placeholder="Enter email subject..."
                 />
               </div>
 
-              {/* Original Email Textarea */}
-              <div className="mb-4">
-                <label htmlFor="originalEmail" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {/* Original Email */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Original Email
                 </label>
                 <textarea
-                  id="originalEmail"
                   value={originalEmail}
                   onChange={(e) => setOriginalEmail(e.target.value)}
                   rows={6}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white resize-vertical"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none"
                   placeholder="Paste the original email here..."
                 />
               </div>
 
-              {/* Language Dropdown */}
-              <div className="mb-4">
-                <label htmlFor="language" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Language
-                </label>
-                <select
-                  id="language"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
-                >
-                  {languages.map((lang) => (
-                    <option key={lang.value} value={lang.value}>
-                      {lang.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Language and Tone Selection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Language
+                  </label>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  >
+                    {languages.map((lang) => (
+                      <option key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              {/* Tone Dropdown */}
-              <div className="mb-6">
-                <label htmlFor="tone" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Tone
-                </label>
-                <select
-                  id="tone"
-                  value={tone}
-                  onChange={(e) => setTone(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
-                >
-                  {tones.map((toneOption) => (
-                    <option key={toneOption.value} value={toneOption.value}>
-                      {toneOption.label}
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Tone
+                  </label>
+                  <select
+                    value={tone}
+                    onChange={(e) => setTone(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  >
+                    {tones.map((toneOption) => (
+                      <option key={toneOption.value} value={toneOption.value}>
+                        {toneOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex gap-3">
                 <button
                   onClick={handleGenerateReply}
-                  disabled={isLoading || !subject.trim() || !originalEmail.trim()}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200 flex items-center justify-center gap-2"
+                  disabled={isLoading}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
                 >
                   {isLoading ? (
                     <>
@@ -540,7 +565,7 @@ export default function EmailResponderPage() {
                 </button>
                 <button
                   onClick={handleClear}
-                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200"
+                  className="px-6 py-3 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 font-medium rounded-lg transition-colors duration-200"
                 >
                   Clear
                 </button>
@@ -549,152 +574,130 @@ export default function EmailResponderPage() {
           </div>
 
           {/* Generated Reply */}
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  Generated Reply
-                </h2>
-                {generatedReply && (
-                  <button
-                    onClick={handleCopy}
-                    className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors duration-200"
-                  >
-                    {copied ? (
-                      <>
-                        <CheckIcon className="h-4 w-4" />
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <ClipboardIcon className="h-4 w-4" />
-                        Copy
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-              
-              <div className="min-h-[200px] p-4 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700">
-                {generatedReply ? (
-                  <div className="text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
-                    {generatedReply}
-                  </div>
-                ) : (
-                  <div className="text-gray-500 dark:text-gray-400 text-center py-8">
-                    {isLoading ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                        Generating your reply...
-                      </div>
-                    ) : (
-                      'Your generated reply will appear here'
-                    )}
-                  </div>
-                )}
-              </div>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                Generated Reply
+              </h2>
+              {generatedReply && (
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors duration-200"
+                >
+                  {copied ? (
+                    <>
+                      <CheckIcon className="h-5 w-5" />
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardIcon className="h-5 w-5" />
+                      Copy
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+            
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-h-[300px]">
+              {generatedReply ? (
+                <p className="text-gray-900 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
+                  {generatedReply}
+                </p>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 italic">
+                  Your generated reply will appear here...
+                </p>
+              )}
             </div>
           </div>
         </div>
 
         {/* History Section */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-12">
+        <div className="mt-12">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-              <ClockIcon className="h-6 w-6" />
+            <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
               Email History
             </h2>
             <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search history..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white w-64"
+                className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
           </div>
 
-          {/* History Content */}
           {isLoadingHistory ? (
             <div className="text-center py-8">
-              <ArrowPathIcon className="h-8 animate-spin text-gray-400 mx-auto mb-2" />
-              <p className="text-gray-500 dark:text-gray-400">Loading history...</p>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600 dark:text-gray-400">Loading history...</p>
             </div>
           ) : historyError ? (
             <div className="text-center py-8">
-              <p className="text-red-500 dark:text-red-400 mb-2">{historyError}</p>
+              <div className="text-red-600 dark:text-red-400 mb-4">
+                <svg className="h-8 w-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">{historyError}</p>
               <button
                 onClick={loadHistory}
-                className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
               >
-                Try again
+                Try Again
               </button>
             </div>
           ) : filteredHistory.length === 0 ? (
             <div className="text-center py-8">
-              <ClockIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500 dark:text-gray-400 text-lg">
-                {searchTerm ? 'No history found matching your search.' : 'No email history yet.'}
+              <p className="text-gray-600 dark:text-gray-400">
+                {searchTerm ? 'No history items match your search.' : 'No email history yet.'}
               </p>
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 mt-2"
-                >
-                  Clear search
-                </button>
-              )}
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredHistory.map((item) => (
                 <div
                   key={item.id}
                   onClick={() => handleHistoryItemClick(item)}
-                  className="border border-gray-200 dark:border-gray-600 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors duration-200"
+                  className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer border border-gray-200 dark:border-gray-700"
                 >
                   <div className="flex items-start justify-between mb-2">
-                    <h3 className="font-medium text-gray-900 dark:text-white flex-1 mr-4">
+                    <h3 className="font-semibold text-gray-900 dark:text-white text-sm line-clamp-2">
                       {item.subject}
                     </h3>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                       <button
                         onClick={(e) => handleViewDetails(item, e)}
-                        className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-                        title="View Details"
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"
+                        title="View details"
                       >
                         <EyeIcon className="h-4 w-4" />
                       </button>
                       <button
                         onClick={(e) => handleSingleDelete(item, e)}
-                        className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                        className="text-red-400 hover:text-red-600 p-1"
                         title="Delete"
                       >
                         <TrashIcon className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400 mb-2">
-                    <span>{formatDate(item.createdAt)}</span>
-                    <div className="flex gap-4">
-                      <span>Language: {item.language}</span>
-                      <span>Tone: {item.tone}</span>
+                  <p className="text-gray-600 dark:text-gray-400 text-sm mb-3 line-clamp-3">
+                    {truncateText(item.originalEmail, 100)}
+                  </p>
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <div className="flex items-center gap-2">
+                      <span className="capitalize">{item.language}</span>
+                      <span>•</span>
+                      <span className="capitalize">{item.tone}</span>
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <div>
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Original:</span>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        {truncateText(item.originalEmail, 100)}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Reply:</span>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        {truncateText(item.reply, 50)}
-                      </p>
+                    <div className="flex items-center gap-1">
+                      <ClockIcon className="h-3 w-3" />
+                      {formatDate(item.createdAt)}
                     </div>
                   </div>
                 </div>

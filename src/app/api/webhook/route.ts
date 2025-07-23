@@ -1,6 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { prisma } from '@/lib/prisma';
+import { updateUserSubscription } from '@/lib/subscription';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-06-30.basil',
@@ -23,22 +25,106 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ✅ Handle Stripe events here
-  switch (event.type) {
-    case 'checkout.session.completed':
-      console.log('✅ Payment success:', event.data.object);
-      break;
-    case 'invoice.payment_failed':
-      console.log('❌ Payment failed:', event.data.object);
-      break;
-    case 'customer.subscription.created':
-    case 'customer.subscription.updated':
-    case 'customer.subscription.deleted':
-      console.log('🔄 Subscription event:', event.data.object);
-      break;
-    default:
-      console.log('Unhandled event:', event.type);
-  }
+  // Handle Stripe events
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        console.log('✅ Payment success:', session.id);
+        
+        // Create or update user subscription
+        if (session.customer && session.subscription) {
+          const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+          const customer = await stripe.customers.retrieve(session.customer as string);
+          
+          // Extract user ID from metadata or customer email
+          const userId = session.metadata?.userId || (customer as Stripe.Customer).email;
+          
+          if (userId) {
+            await updateUserSubscription(
+              userId,
+              session.customer as string,
+              session.subscription as string,
+              subscription.status,
+              new Date((subscription as any).current_period_end * 1000)
+            );
+          }
+        }
+        break;
+      }
 
-  return new NextResponse('Event received', { status: 200 });
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated': {
+        const subscription = event.data.object as Stripe.Subscription;
+        console.log('🔄 Subscription updated:', subscription.id);
+        
+        // Update user subscription in database
+        const customer = await stripe.customers.retrieve(subscription.customer as string);
+        const userId = (customer as Stripe.Customer).email; // Use email as user ID for now
+        
+        if (userId) {
+          await updateUserSubscription(
+            userId,
+            subscription.customer as string,
+            subscription.id,
+            subscription.status,
+            new Date((subscription as any).current_period_end * 1000)
+          );
+        }
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object as Stripe.Subscription;
+        console.log('❌ Subscription deleted:', subscription.id);
+        
+        // Mark subscription as canceled in database
+        const customer = await stripe.customers.retrieve(subscription.customer as string);
+        const userId = (customer as Stripe.Customer).email;
+        
+        if (userId) {
+          await updateUserSubscription(
+            userId,
+            subscription.customer as string,
+            subscription.id,
+            'canceled',
+            new Date((subscription as any).current_period_end * 1000)
+          );
+        }
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object as Stripe.Invoice;
+        console.log('❌ Payment failed:', invoice.id);
+        
+        // Update subscription status to past_due
+        const subscriptionId = (invoice as any).subscription;
+        if (subscriptionId) {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          const customer = await stripe.customers.retrieve(subscription.customer as string);
+          const userId = (customer as Stripe.Customer).email;
+          
+          if (userId) {
+            await updateUserSubscription(
+              userId,
+              subscription.customer as string,
+              subscription.id,
+              subscription.status,
+              new Date((subscription as any).current_period_end * 1000)
+            );
+          }
+        }
+        break;
+      }
+
+      default:
+        console.log('Unhandled event:', event.type);
+    }
+
+    return new NextResponse('Event received', { status: 200 });
+  } catch (error) {
+    console.error('Error processing webhook:', error);
+    return new NextResponse('Webhook processing failed', { status: 500 });
+  }
 }

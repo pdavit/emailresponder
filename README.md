@@ -4,16 +4,34 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ### Environment Setup
 
-1. Create a `.env.local` file in the root directory with your OpenAI API key and database URL:
+1. Create a `.env` file in the root directory with your environment variables:
 
 ```bash
+# Database URL (PostgreSQL)
+DATABASE_URL="postgresql://username:password@localhost:5432/emailresponder"
+
 # OpenAI API Key
 # Get your API key from https://platform.openai.com/api-keys
-OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_API_KEY="sk-your-openai-api-key"
 
-# Database URL (Neon Postgres)
-# Get your database URL from https://neon.tech
-DATABASE_URL=your_neon_database_url_here
+# Stripe Configuration
+# Get your keys from https://dashboard.stripe.com/apikeys
+STRIPE_SECRET_KEY="sk_test_your_stripe_secret_key"
+STRIPE_PUBLISHABLE_KEY="pk_test_your_stripe_publishable_key"
+STRIPE_WEBHOOK_SECRET="whsec_your_webhook_secret"
+STRIPE_PRICE_ID="price_your_stripe_price_id"
+
+# Clerk Authentication
+# Get your keys from https://dashboard.clerk.com
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_your_clerk_publishable_key"
+CLERK_SECRET_KEY="sk_test_your_clerk_secret_key"
+NEXT_PUBLIC_CLERK_SIGN_IN_URL="/sign-in"
+NEXT_PUBLIC_CLERK_SIGN_UP_URL="/sign-up"
+NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL="/emailresponder"
+NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL="/emailresponder"
+
+# App Configuration
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ```
 
 2. Set up the database:
@@ -118,6 +136,18 @@ This API manages the history of generated email replies.
 The application uses a PostgreSQL database with the following schema:
 
 ```sql
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  stripeCustomerId String?  @unique
+  subscriptionId  String?
+  subscriptionStatus String? // 'active', 'canceled', 'past_due', 'unpaid', etc.
+  subscriptionEndDate DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  history         History[]
+}
+
 model History {
   id            Int      @id @default(autoincrement())
   subject       String
@@ -126,6 +156,8 @@ model History {
   language      String
   tone          String
   createdAt     DateTime @default(now())
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 ```
 
@@ -147,3 +179,5 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+For detailed deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).

@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowRightIcon } from '@heroicons/react/24/outline';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, UserButton } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 
 export default function HomePage() {
@@ -27,12 +27,18 @@ export default function HomePage() {
             </div>
             <span className="text-xl font-bold text-gray-900 dark:text-white">EmailResponder</span>
           </div>
-          <a
-            href="/sign-in"
-            className="px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
-          >
-            Sign In
-          </a>
+          <div>
+            {isSignedIn ? (
+              <UserButton afterSignOutUrl="/" />
+            ) : (
+              <a
+                href="/sign-in"
+                className="px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
+              >
+                Sign In
+              </a>
+            )}
+          </div>
         </div>
       </nav>
 
@@ -43,12 +49,10 @@ export default function HomePage() {
             AI-Powered Email
             <span className="text-blue-600 dark:text-blue-400"> Responses</span>
           </h1>
-          
           <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-8 leading-relaxed">
-            Generate professional, context-aware email replies in seconds. 
+            Generate professional, context-aware email replies in seconds.
             Save time and maintain consistency across all your communications.
           </p>
-
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
             <button
               onClick={handleGetStarted}

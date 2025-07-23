@@ -1,7 +1,12 @@
 import Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+// Validate required environment variables
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error('STRIPE_SECRET_KEY environment variable is required');
+}
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2025-06-30.basil',
 });
 
@@ -17,6 +22,11 @@ export interface SubscriptionStatus {
  */
 export async function checkSubscriptionStatus(userId: string): Promise<SubscriptionStatus> {
   try {
+    if (!userId) {
+      console.warn('checkSubscriptionStatus: No userId provided');
+      return { hasActiveSubscription: false };
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -52,6 +62,10 @@ export async function checkSubscriptionStatus(userId: string): Promise<Subscript
  */
 export async function verifyStripeSubscription(stripeCustomerId: string): Promise<boolean> {
   try {
+    if (!stripeCustomerId) {
+      return false;
+    }
+
     const subscriptions = await stripe.subscriptions.list({
       customer: stripeCustomerId,
       status: 'active',
@@ -76,6 +90,10 @@ export async function updateUserSubscription(
   subscriptionEndDate: Date
 ) {
   try {
+    if (!userId || !stripeCustomerId || !subscriptionId) {
+      throw new Error('Missing required parameters for updateUserSubscription');
+    }
+
     await prisma.user.upsert({
       where: { id: userId },
       update: {
@@ -94,6 +112,8 @@ export async function updateUserSubscription(
         subscriptionEndDate,
       },
     });
+
+    console.log(`Updated subscription for user ${userId}: ${subscriptionStatus}`);
   } catch (error) {
     console.error('Error updating user subscription:', error);
     throw error;
