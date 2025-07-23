@@ -1,5 +1,4 @@
 import { authMiddleware } from "@clerk/nextjs";
-import { getUserSubscriptionStatus } from "@/lib/subscription";
 
 export default authMiddleware({
   publicRoutes: [
@@ -21,25 +20,31 @@ export default authMiddleware({
     const { userId, isPublicRoute } = auth;
     const url = new URL(req.url);
 
-    // 1. Not authenticated & accessing private route
+    // Not signed in and not on public route
     if (!userId && !isPublicRoute) {
       const signInUrl = new URL("/sign-in", req.url);
       signInUrl.searchParams.set("redirect_url", req.url);
       return Response.redirect(signInUrl);
     }
 
-    // 2. User is trying to access /app but we need to check subscription
+    // If signed in and accessing /app, verify subscription
     const isAppRoute = url.pathname.startsWith("/app");
 
     if (userId && isAppRoute) {
-      const subscription = await getUserSubscriptionStatus(userId);
+      const response = await fetch(`${url.origin}/api/subscription-status`, {
+        headers: {
+          cookie: req.headers.get("cookie") || "",
+        },
+      });
 
-      if (!subscription?.isActive) {
+      const { hasActiveSubscription } = await response.json();
+
+      if (!hasActiveSubscription) {
         return Response.redirect(new URL("/pricing", req.url));
       }
     }
 
-    // ✅ Allow normal behavior
+    // Allow request
     return;
   },
 });
