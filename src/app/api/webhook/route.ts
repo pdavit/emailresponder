@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import type { Invoice } from 'stripe';
 import { updateUserSubscription } from '@/lib/subscription';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
