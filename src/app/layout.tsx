@@ -3,8 +3,7 @@ import { Geist_Mono, Geist } from "next/font/google";
 import "./globals.css";
 import type { Metadata } from "next";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import Header from "@/components/Header"; // 👈 Make sure this exists
-
+import { Header } from "@/components/Header";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
