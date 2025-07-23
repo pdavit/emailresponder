@@ -1,8 +1,9 @@
-import { ClerkProvider, SignedIn, UserButton } from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Geist_Mono, Geist } from "next/font/google";
 import "./globals.css";
 import type { Metadata } from "next";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import Header from "@/components/Header"; // 👈 Make sure this exists
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -24,23 +25,7 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50 dark:bg-gray-900`}
         >
           <ErrorBoundary>
-              <header className="w-full px-4 py-3 flex justify-between items-center border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
-                <div className="flex items-center space-x-2">
-                  <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white font-bold text-sm">ER</span>
-                  </div>
-                  <span className="text-xl font-bold text-gray-900 dark:text-white">
-                    EmailResponder
-                  </span>
-                </div>
-               <SignedIn>
-                <div className="bg-gradient-to-r from-blue-500 to-teal-400 p-[2px] rounded-full">
-                  <div className="bg-white dark:bg-gray-950 rounded-full p-1 shadow-md">
-                    <UserButton afterSignOutUrl="/" />
-                  </div>
-                </div>
-               </SignedIn>
-              </header>
+            <Header />
             <main>{children}</main>
           </ErrorBoundary>
         </body>
