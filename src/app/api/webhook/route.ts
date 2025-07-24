@@ -16,13 +16,12 @@ export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
   try {
- if (process.env.NODE_ENV !== 'production') {
-  console.log('🔧 Dev mode - Skipping webhook signature verification!');
-  event = JSON.parse(rawBody);
-} else {
-  event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
-}
-;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🔧 Dev mode - Skipping webhook signature verification!');
+      event = JSON.parse(rawBody);
+    } else {
+      event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+    }
   } catch (err) {
     console.error('❌ Webhook Error:', (err as Error).message);
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, {
@@ -36,24 +35,21 @@ export async function POST(req: NextRequest) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         console.log('✅ Payment success:', session.id);
-        
-        // Create or update user subscription
+
         if (session.customer && session.subscription) {
           const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
           const customer = await stripe.customers.retrieve(session.customer as string);
-          
-          // Extract user ID from metadata or customer email
           const userId = session.metadata?.userId || (customer as Stripe.Customer).email;
-          
+
           if (userId) {
-            // Stripe API 2025-03-31+ deprecates subscription.current_period_end; use items.data[0].current_period_end
-            const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
+            const currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? 0;
+
             await updateUserSubscription(userId, {
-  stripeCustomerId: session.customer as string,
-  stripeSubscriptionId: session.subscription as string,
-  stripePriceId: subscription.items.data[0]?.price.id || '',
-  stripeCurrentPeriodEnd: currentPeriodEnd ?? 0,
-});
+              stripeCustomerId: session.customer as string,
+              stripeSubscriptionId: session.subscription as string,
+              stripePriceId: subscription.items.data[0]?.price.id || '',
+              stripeCurrentPeriodEnd: currentPeriodEnd,
+            });
           }
         }
         break;
@@ -63,38 +59,39 @@ export async function POST(req: NextRequest) {
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription;
         console.log('🔄 Subscription updated:', subscription.id);
-        
-        // Update user subscription in database
+
         const customer = await stripe.customers.retrieve(subscription.customer as string);
-        const userId = (customer as Stripe.Customer).email; // Use email as user ID for now
-        
+        const userId = (customer as Stripe.Customer).email;
+
         if (userId) {
-          const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-         await updateUserSubscription(userId, {
-  stripeCustomerId: subscription.customer as string,
-  stripeSubscriptionId: subscription.id,
-  stripePriceId: subscription.items.data[0]?.price.id || '',
-  stripeCurrentPeriodEnd: subscription.current_period_end ?? 0,
-});        }
+          const currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? 0;
+
+          await updateUserSubscription(userId, {
+            stripeCustomerId: subscription.customer as string,
+            stripeSubscriptionId: subscription.id,
+            stripePriceId: subscription.items.data[0]?.price.id || '',
+            stripeCurrentPeriodEnd: currentPeriodEnd,
+          });
+        }
         break;
       }
 
       case 'customer.subscription.deleted': {
         const subscription = event.data.object as Stripe.Subscription;
         console.log('❌ Subscription deleted:', subscription.id);
-        
-        // Mark subscription as canceled in database
+
         const customer = await stripe.customers.retrieve(subscription.customer as string);
         const userId = (customer as Stripe.Customer).email;
-        
+
         if (userId) {
-          const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-         await updateUserSubscription(userId, {
-  stripeCustomerId: subscription.customer as string,
-  stripeSubscriptionId: subscription.id,
-  stripePriceId: subscription.items.data[0]?.price.id || '',
-  stripeCurrentPeriodEnd: currentPeriodEnd ?? 0,
-});
+          const currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? 0;
+
+          await updateUserSubscription(userId, {
+            stripeCustomerId: subscription.customer as string,
+            stripeSubscriptionId: subscription.id,
+            stripePriceId: subscription.items.data[0]?.price.id || '',
+            stripeCurrentPeriodEnd: currentPeriodEnd,
+          });
         }
         break;
       }
@@ -102,34 +99,34 @@ export async function POST(req: NextRequest) {
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
         console.log('❌ Payment failed:', invoice.id);
-        
-        // Update subscription status to past_due
-       const subscriptionId = (invoice as unknown as { subscription: string }).subscription;
+
+        const subscriptionId = (invoice as any).subscription;
         if (subscriptionId) {
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
           const customer = await stripe.customers.retrieve(subscription.customer as string);
           const userId = (customer as Stripe.Customer).email;
-          
+
           if (userId) {
-            const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-           await updateUserSubscription(userId, {
-  stripeCustomerId: subscription.customer as string,
-  stripeSubscriptionId: subscription.id,
-  stripePriceId: subscription.items.data[0]?.price.id || '',
-  stripeCurrentPeriodEnd: currentPeriodEnd ?? 0,
-});
+            const currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? 0;
+
+            await updateUserSubscription(userId, {
+              stripeCustomerId: subscription.customer as string,
+              stripeSubscriptionId: subscription.id,
+              stripePriceId: subscription.items.data[0]?.price.id || '',
+              stripeCurrentPeriodEnd: currentPeriodEnd,
+            });
           }
         }
         break;
       }
 
       default:
-        console.log('Unhandled event:', event.type);
+        console.log('ℹ️ Unhandled event type:', event.type);
     }
 
     return new NextResponse('Event received', { status: 200 });
   } catch (error) {
-    console.error('Error processing webhook:', error);
+    console.error('🚨 Error processing webhook:', error);
     return new NextResponse('Webhook processing failed', { status: 500 });
   }
 }
