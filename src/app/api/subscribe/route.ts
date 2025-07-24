@@ -27,13 +27,12 @@ export async function POST(request: NextRequest) {
     subscriptionEndDate.setMonth(subscriptionEndDate.getMonth() + 1);
 
     // Update user subscription in database
-    await updateUserSubscription(
-      userId,
-      mockStripeCustomerId,
-      mockSubscriptionId,
-      'active',
-      subscriptionEndDate
-    );
+   await updateUserSubscription(userId, {
+  stripeCustomerId: mockStripeCustomerId,
+  stripeSubscriptionId: mockSubscriptionId,
+  stripePriceId: 'price_mock_id', // Use your real or mocked price_id
+  stripeCurrentPeriodEnd: Math.floor(subscriptionEndDate.getTime() / 1000),
+});
 
     return NextResponse.json({
       success: true,
