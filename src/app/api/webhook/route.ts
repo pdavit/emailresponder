@@ -90,27 +90,27 @@ export async function POST(req: NextRequest) {
       }
 
       case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice;
-        const subscriptionId = (invoice.subscription as string) || null;
+  const invoice = event.data.object as Stripe.Invoice;
+  const subscriptionId = (invoice.subscription ?? null) as string | null;
 
-        if (subscriptionId) {
-          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-          const customer = await stripe.customers.retrieve(subscription.customer as string);
-          const userId = (customer as Stripe.Customer).email;
+  if (subscriptionId) {
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const customer = await stripe.customers.retrieve(subscription.customer as string);
+    const userId = (customer as Stripe.Customer).email;
 
-          if (userId) {
-            const currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? 0;
+    if (userId) {
+      const currentPeriodEnd = subscription.items.data[0]?.current_period_end ?? 0;
 
-            await updateUserSubscription(userId, {
-              stripeCustomerId: subscription.customer as string,
-              stripeSubscriptionId: subscription.id,
-              stripePriceId: subscription.items.data[0]?.price.id || '',
-              stripeCurrentPeriodEnd: currentPeriodEnd,
-            });
-          }
-        }
-        break;
-      }
+      await updateUserSubscription(userId, {
+        stripeCustomerId: subscription.customer as string,
+        stripeSubscriptionId: subscriptionId,
+        stripePriceId: subscription.items.data[0]?.price.id || '',
+        stripeCurrentPeriodEnd: currentPeriodEnd,
+      });
+    }
+  }
+  break;
+}
 
       default:
         console.log('Unhandled Stripe event type:', event.type);
