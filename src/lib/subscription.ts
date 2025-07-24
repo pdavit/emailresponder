@@ -1,10 +1,6 @@
 import { db } from "@/lib/db";
 import { subscriptions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import type { InferSelectModel } from "drizzle-orm";
-import type { subscriptions as subscriptionsTable } from "@/lib/db/schema";
-
-type Subscription = InferSelectModel<typeof subscriptionsTable>;
 
 /**
  * Check the user's subscription status.
@@ -13,7 +9,7 @@ export async function checkSubscriptionStatus(userId: string) {
   const [subscription] = await db
     .select()
     .from(subscriptions)
-    .where(eq(subscriptions.userId, userId)) as [Subscription?];
+    .where(eq(subscriptions.userId, userId));
 
   if (!subscription) {
     return {
@@ -23,15 +19,13 @@ export async function checkSubscriptionStatus(userId: string) {
     };
   }
 
-  const stripePeriod = subscription.stripeCurrentPeriodEnd as Date | null;
-
-  const isActive =
-    stripePeriod && stripePeriod.getTime() + 86_400_000 > Date.now();
+  const endsAt = subscription.endsAt;
+  const isActive = endsAt && endsAt.getTime() + 86_400_000 > Date.now();
 
   return {
     hasActiveSubscription: !!isActive,
     subscriptionStatus: isActive ? "active" : "expired",
-    subscriptionEndDate: stripePeriod,
+    subscriptionEndDate: endsAt,
   };
 }
 
@@ -52,14 +46,18 @@ export async function updateUserSubscription(
     .from(subscriptions)
     .where(eq(subscriptions.userId, userId));
 
+  const endsAtDate = data.stripeCurrentPeriodEnd
+    ? new Date(data.stripeCurrentPeriodEnd * 1000)
+    : undefined;
+
   if (existing) {
     await db
       .update(subscriptions)
       .set({
-        ...data,
-        stripeCurrentPeriodEnd: data.stripeCurrentPeriodEnd
-          ? new Date(data.stripeCurrentPeriodEnd * 1000)
-          : undefined,
+        stripeCustomerId: data.stripeCustomerId,
+        stripeSubscriptionId: data.stripeSubscriptionId,
+        stripePriceId: data.stripePriceId,
+        endsAt: endsAtDate,
       })
       .where(eq(subscriptions.userId, userId));
   } else {
@@ -68,9 +66,7 @@ export async function updateUserSubscription(
       stripeCustomerId: data.stripeCustomerId,
       stripeSubscriptionId: data.stripeSubscriptionId,
       stripePriceId: data.stripePriceId,
-      stripeCurrentPeriodEnd: data.stripeCurrentPeriodEnd
-        ? new Date(data.stripeCurrentPeriodEnd * 1000)
-        : undefined,
+      endsAt: endsAtDate,
     });
   }
 }
