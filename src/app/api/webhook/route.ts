@@ -16,7 +16,13 @@ export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+ if (process.env.NODE_ENV !== 'production') {
+  console.log('🔧 Dev mode - Skipping webhook signature verification!');
+  event = JSON.parse(rawBody);
+} else {
+  event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+}
+;
   } catch (err) {
     console.error('❌ Webhook Error:', (err as Error).message);
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, {
@@ -64,14 +70,12 @@ export async function POST(req: NextRequest) {
         
         if (userId) {
           const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-          await updateUserSubscription(
-            userId,
-            subscription.customer as string,
-            subscription.id,
-            subscription.status,
-            new Date((currentPeriodEnd ?? 0) * 1000)
-          );
-        }
+         await updateUserSubscription(userId, {
+  stripeCustomerId: subscription.customer as string,
+  stripeSubscriptionId: subscription.id,
+  stripePriceId: subscription.items.data[0]?.price.id || '',
+  stripeCurrentPeriodEnd: subscription.current_period_end ?? 0,
+});        }
         break;
       }
 
@@ -85,13 +89,12 @@ export async function POST(req: NextRequest) {
         
         if (userId) {
           const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-          await updateUserSubscription(
-            userId,
-            subscription.customer as string,
-            subscription.id,
-            'canceled',
-            new Date((currentPeriodEnd ?? 0) * 1000)
-          );
+         await updateUserSubscription(userId, {
+  stripeCustomerId: subscription.customer as string,
+  stripeSubscriptionId: subscription.id,
+  stripePriceId: subscription.items.data[0]?.price.id || '',
+  stripeCurrentPeriodEnd: currentPeriodEnd ?? 0,
+});
         }
         break;
       }
@@ -109,13 +112,12 @@ export async function POST(req: NextRequest) {
           
           if (userId) {
             const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-            await updateUserSubscription(
-              userId,
-              subscription.customer as string,
-              subscription.id,
-              subscription.status,
-              new Date((currentPeriodEnd ?? 0) * 1000)
-            );
+           await updateUserSubscription(userId, {
+  stripeCustomerId: subscription.customer as string,
+  stripeSubscriptionId: subscription.id,
+  stripePriceId: subscription.items.data[0]?.price.id || '',
+  stripeCurrentPeriodEnd: currentPeriodEnd ?? 0,
+});
           }
         }
         break;
