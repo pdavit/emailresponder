@@ -6,7 +6,13 @@ export async function checkSubscriptionStatus(userId: string) {
     subscriptionEndDate: null,
   };
 }
-export const updateUserSubscription = () => {
-  // temporary no-op function
+export const updateUserSubscription = (
+  userId: string,
+  stripeCustomerId: string,
+  stripeSubscriptionId: string,
+  status: string,
+  subscriptionEndDate: Date | null
+) => {
+  // TODO: Implement actual DB logic
   return;
 };
