@@ -1,4 +1,5 @@
 import { authMiddleware } from "@clerk/nextjs";
+import { checkSubscriptionStatus } from "@/lib/subscription";
 
 export default authMiddleware({
   publicRoutes: [
@@ -32,19 +33,9 @@ export default authMiddleware({
 
     if (userId && isAppRoute) {
       try {
-        const response = await fetch("https://skyntco.com/api/subscription-status", {
-          headers: {
-            cookie: req.headers.get("cookie") || "",
-          },
-        });
+        const subscription = await checkSubscriptionStatus(userId);
 
-        if (!response.ok) {
-          return Response.redirect(new URL("/pricing", req.url));
-        }
-
-        const { hasActiveSubscription } = await response.json();
-
-        if (!hasActiveSubscription) {
+        if (!subscription?.hasActiveSubscription) {
           return Response.redirect(new URL("/pricing", req.url));
         }
       } catch (error) {
@@ -54,8 +45,8 @@ export default authMiddleware({
         return Response.redirect(new URL("/pricing", req.url));
       }
     }
-  }
-}); // ✅ these two were missing
+  },
+});
 
 export const config = {
   matcher: ["/((?!.+\\.[\\w]+$|_next).*)", "/", "/(api|trpc)(.*)"],
