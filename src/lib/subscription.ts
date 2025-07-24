@@ -6,3 +6,7 @@ export async function checkSubscriptionStatus(userId: string) {
     subscriptionEndDate: null,
   };
 }
+export const updateUserSubscription = () => {
+  // temporary no-op function
+  return;
+};
