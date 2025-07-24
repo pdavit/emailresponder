@@ -19,14 +19,15 @@ export async function checkSubscriptionStatus(userId: string) {
     };
   }
 
-  const isActive =
-    subscription.stripeCurrentPeriodEnd &&
-    subscription.stripeCurrentPeriodEnd.getTime() + 86_400_000 > Date.now();
+ const stripePeriod = subscription.stripeCurrentPeriodEnd as Date | null;
 
+const isActive =
+  stripePeriod &&
+  stripePeriod.getTime() + 86_400_000 > Date.now();
   return {
     hasActiveSubscription: !!isActive,
     subscriptionStatus: isActive ? "active" : "expired",
-    subscriptionEndDate: subscription.stripeCurrentPeriodEnd,
+    subscriptionEndDate: stripePeriod,
   };
 }
 
