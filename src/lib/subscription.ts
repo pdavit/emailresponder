@@ -1,18 +1,33 @@
+import { db } from "@/lib/db"; // your Prisma instance
+import { subscriptions } from "@/lib/db/schema"; // adjust path as needed
+import { eq } from "drizzle-orm"; // if using drizzle, else adjust for Prisma
+
 export async function checkSubscriptionStatus(userId: string) {
-  // 🧪 TEMP: Always grant access during testing
-  return {
-    hasActiveSubscription: true,
-    subscriptionStatus: "active",
-    subscriptionEndDate: null,
-  };
+  try {
+    const [subscription] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.userId, userId));
+
+    const now = new Date();
+
+    const isActive =
+      subscription &&
+      subscription.status === "active" &&
+      subscription.stripePriceId &&
+      (!subscription.endsAt || new Date(subscription.endsAt) > now);
+
+    return {
+      hasActiveSubscription: Boolean(isActive),
+      subscriptionStatus: subscription?.status ?? null,
+      subscriptionEndDate: subscription?.endsAt ?? null,
+    };
+  } catch (error) {
+    console.error("Failed to check subscription:", error);
+    return {
+      hasActiveSubscription: false,
+      subscriptionStatus: null,
+      subscriptionEndDate: null,
+    };
+  }
 }
-export const updateUserSubscription = (
-  userId: string,
-  stripeCustomerId: string,
-  stripeSubscriptionId: string,
-  status: string,
-  subscriptionEndDate: Date | null
-) => {
-  // TODO: Implement actual DB logic
-  return;
-};
