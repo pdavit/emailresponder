@@ -5,6 +5,9 @@ import { eq } from "drizzle-orm";
 /**
  * Check the user's subscription status.
  */
+/**
+ * Check the user's subscription status.
+ */
 export async function checkSubscriptionStatus(userId: string) {
   const [subscription] = await db
     .select()
@@ -19,7 +22,7 @@ export async function checkSubscriptionStatus(userId: string) {
     };
   }
 
-  const endsAt = subscription.endsAt;
+  const endsAt = subscription.endsAt as Date | null;
   const isActive = endsAt && endsAt.getTime() + 86_400_000 > Date.now();
 
   return {
@@ -27,6 +30,7 @@ export async function checkSubscriptionStatus(userId: string) {
     subscriptionStatus: isActive ? "active" : "expired",
     subscriptionEndDate: endsAt,
   };
+}
 }
 
 /**
