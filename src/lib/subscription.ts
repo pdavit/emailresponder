@@ -6,10 +6,15 @@ import { eq } from "drizzle-orm";
  * Check the user's subscription status.
  */
 export async function checkSubscriptionStatus(userId: string) {
-  const [subscription] = await db
-    .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId));
+  import type { InferSelectModel } from "drizzle-orm";
+import type { subscriptions as subscriptionsTable } from "@/lib/db/schema";
+
+type Subscription = InferSelectModel<typeof subscriptionsTable>;
+
+const [subscription] = await db
+  .select()
+  .from(subscriptions)
+  .where(eq(subscriptions.userId, userId)) as [Subscription?];
 
   if (!subscription) {
     return {
