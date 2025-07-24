@@ -31,7 +31,6 @@ export async function checkSubscriptionStatus(userId: string) {
     subscriptionEndDate: endsAt,
   };
 }
-}
 
 /**
  * Create or update the user's subscription.
