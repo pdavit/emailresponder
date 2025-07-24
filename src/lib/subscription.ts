@@ -1,20 +1,19 @@
 import { db } from "@/lib/db";
 import { subscriptions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import type { InferSelectModel } from "drizzle-orm";
+import type { subscriptions as subscriptionsTable } from "@/lib/db/schema";
+
+type Subscription = InferSelectModel<typeof subscriptionsTable>;
 
 /**
  * Check the user's subscription status.
  */
 export async function checkSubscriptionStatus(userId: string) {
-  import type { InferSelectModel } from "drizzle-orm";
-import type { subscriptions as subscriptionsTable } from "@/lib/db/schema";
-
-type Subscription = InferSelectModel<typeof subscriptionsTable>;
-
-const [subscription] = await db
-  .select()
-  .from(subscriptions)
-  .where(eq(subscriptions.userId, userId)) as [Subscription?];
+  const [subscription] = await db
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.userId, userId)) as [Subscription?];
 
   if (!subscription) {
     return {
@@ -24,11 +23,11 @@ const [subscription] = await db
     };
   }
 
- const stripePeriod = subscription.stripeCurrentPeriodEnd as Date | null;
+  const stripePeriod = subscription.stripeCurrentPeriodEnd as Date | null;
 
-const isActive =
-  stripePeriod &&
-  stripePeriod.getTime() + 86_400_000 > Date.now();
+  const isActive =
+    stripePeriod && stripePeriod.getTime() + 86_400_000 > Date.now();
+
   return {
     hasActiveSubscription: !!isActive,
     subscriptionStatus: isActive ? "active" : "expired",
