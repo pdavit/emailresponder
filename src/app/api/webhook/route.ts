@@ -4,7 +4,7 @@ import Stripe from 'stripe';
 import { updateUserSubscription } from '@/lib/subscription';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-06-30.basil',
+  apiVersion: '2023-10-16', // Use stable version unless you're sure of a newer one
 });
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -12,13 +12,12 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const sig = req.headers.get('stripe-signature')!;
-
   let event: Stripe.Event;
 
   try {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('🔧 Dev mode - Skipping webhook signature verification!');
-      event = JSON.parse(rawBody);
+      console.log('🔧 Dev mode: Skipping Stripe signature verification');
+      event = JSON.parse(rawBody) as Stripe.Event;
     } else {
       event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
     }
@@ -29,12 +28,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Handle Stripe events
   try {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
-        console.log('✅ Payment success:', session.id);
 
         if (session.customer && session.subscription) {
           const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
@@ -58,8 +55,6 @@ export async function POST(req: NextRequest) {
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription;
-        console.log('🔄 Subscription updated:', subscription.id);
-
         const customer = await stripe.customers.retrieve(subscription.customer as string);
         const userId = (customer as Stripe.Customer).email;
 
@@ -78,8 +73,6 @@ export async function POST(req: NextRequest) {
 
       case 'customer.subscription.deleted': {
         const subscription = event.data.object as Stripe.Subscription;
-        console.log('❌ Subscription deleted:', subscription.id);
-
         const customer = await stripe.customers.retrieve(subscription.customer as string);
         const userId = (customer as Stripe.Customer).email;
 
@@ -98,9 +91,8 @@ export async function POST(req: NextRequest) {
 
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
-        console.log('❌ Payment failed:', invoice.id);
+        const subscriptionId = (invoice.subscription as string) || null;
 
-        const subscriptionId = (invoice as any).subscription;
         if (subscriptionId) {
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
           const customer = await stripe.customers.retrieve(subscription.customer as string);
@@ -121,12 +113,12 @@ export async function POST(req: NextRequest) {
       }
 
       default:
-        console.log('ℹ️ Unhandled event type:', event.type);
+        console.log('Unhandled Stripe event type:', event.type);
     }
 
     return new NextResponse('Event received', { status: 200 });
   } catch (error) {
-    console.error('🚨 Error processing webhook:', error);
+    console.error('🚨 Error processing event:', error);
     return new NextResponse('Webhook processing failed', { status: 500 });
   }
 }
