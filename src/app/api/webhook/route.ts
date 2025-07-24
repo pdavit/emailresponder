@@ -42,13 +42,12 @@ export async function POST(req: NextRequest) {
           if (userId) {
             // Stripe API 2025-03-31+ deprecates subscription.current_period_end; use items.data[0].current_period_end
             const currentPeriodEnd = Array.isArray(subscription.items.data) && subscription.items.data.length > 0 ? subscription.items.data[0].current_period_end : null;
-            await updateUserSubscription(
-              userId,
-              session.customer as string,
-              session.subscription as string,
-              subscription.status,
-              new Date((currentPeriodEnd ?? 0) * 1000)
-            );
+            await updateUserSubscription(userId, {
+  stripeCustomerId: session.customer as string,
+  stripeSubscriptionId: session.subscription as string,
+  stripePriceId: subscription.items.data[0]?.price.id || '',
+  stripeCurrentPeriodEnd: currentPeriodEnd ?? 0,
+});
           }
         }
         break;
