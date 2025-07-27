@@ -14,7 +14,7 @@ export async function POST() {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
-        stripeSubscriptionStatus: true,
+        subscriptionStatus: true,
       },
     });
 
