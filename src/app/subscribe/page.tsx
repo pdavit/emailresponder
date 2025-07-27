@@ -5,26 +5,9 @@ import { useState } from "react";
 export default function SubscribePage() {
   const [loading, setLoading] = useState(false);
 
-  const handleSubscribe = async () => {
+  const handleSubscribe = () => {
     setLoading(true);
-    try {
-      const res = await fetch("/api/create-checkout-session", {
-        method: "POST",
-      });
-
-      const data = await res.json();
-
-      if (data?.url) {
-        window.location.href = data.url; // 🚀 Redirect to LIVE checkout session
-      } else {
-        alert("Something went wrong. No URL returned.");
-      }
-    } catch (error) {
-      console.error("❌ Subscription error:", error);
-      alert("Checkout failed. Check the console for details.");
-    } finally {
-      setLoading(false);
-    }
+    window.location.href = "https://buy.stripe.com/28E7sL9QR23W7I46f82B202"; // ✅ LIVE checkout URL
   };
 
   return (
