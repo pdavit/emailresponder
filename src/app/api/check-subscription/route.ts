@@ -18,10 +18,9 @@ export async function POST() {
       },
     });
 
-    const isActive =
-      user?.stripeSubscriptionStatus === "active" ||
-      user?.stripeSubscriptionStatus === "trialing";
-
+   const isActive =
+    user?.subscriptionStatus === "active" ||
+    user?.subscriptionStatus === "trialing";
     return NextResponse.json({ hasActiveSubscription: isActive });
   } catch (error) {
     console.error("❌ Subscription check failed:", error);
