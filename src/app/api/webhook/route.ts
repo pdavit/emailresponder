@@ -8,8 +8,8 @@ import { updateUserSubscription } from '@/lib/subscription';
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 export async function POST(req: Request) {
-  const body = await req.text();
-const sig = headers().get('stripe-signature')!;
+ const body = await req.text();
+ const sig = (await headers()).get('stripe-signature')!;
 
   let event: Stripe.Event;
 
