@@ -23,12 +23,12 @@ export async function updateUserSubscription(
   }
 
   await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      stripeSubscriptionId,
-      stripeSubscriptionStatus: subscriptionStatus,
-    },
-  });
+  where: { id: user.id },
+  data: {
+    subscriptionId: stripeSubscriptionId,
+    subscriptionStatus: subscriptionStatus,
+  },
+});
 
   console.log(`✅ Updated subscription for ${user.email}: ${subscriptionStatus}`);
 }
