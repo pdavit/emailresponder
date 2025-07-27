@@ -20,28 +20,44 @@ export async function POST(req: Request) {
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
   }
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      console.log('✅ Subscription successful:', event.id);
-      const session = event.data.object as Stripe.Checkout.Session;
+ switch (event.type) {
+  case 'checkout.session.completed': {
+    console.log('✅ Subscription successful:', event.id);
+    const session = event.data.object as Stripe.Checkout.Session;
+    console.log('🧾 Session object:', session);
 
-      if (session.subscription) {
+    if (session.subscription) {
+      try {
         const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+        console.log('📦 Retrieved subscription:', subscription);
+
         await updateUserSubscription(subscription);
+        console.log('✅ Subscription saved in database!');
+      } catch (error) {
+        console.error('❌ Failed to update subscription:', error);
       }
-      break;
+    } else {
+      console.warn('⚠️ No subscription found in checkout session.');
     }
 
-    case 'customer.subscription.updated':
-    case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await updateUserSubscription(subscription);
-      break;
-    }
-
-    default:
-      console.log(`📬 Unhandled event type: ${event.type}`);
+    break;
   }
 
-  return new NextResponse('Received', { status: 200 });
+  case 'customer.subscription.updated':
+  case 'customer.subscription.deleted': {
+    const subscription = event.data.object as Stripe.Subscription;
+    console.log(`🔄 Subscription ${event.type} event received`, subscription);
+
+    try {
+      await updateUserSubscription(subscription);
+      console.log('✅ Subscription status updated in DB');
+    } catch (error) {
+      console.error('❌ Error updating subscription on update/delete:', error);
+    }
+
+    break;
+  }
+
+  default:
+    console.log(`📬 Unhandled event type: ${event.type}`);
 }
