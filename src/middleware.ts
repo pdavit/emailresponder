@@ -1,5 +1,4 @@
 import { authMiddleware } from "@clerk/nextjs";
-import { checkSubscriptionStatus } from "@/lib/subscription";
 
 export default authMiddleware({
   publicRoutes: [
@@ -9,38 +8,46 @@ export default authMiddleware({
     "/pricing",
     "/demo",
     "/subscribe",
+    "/thank-you",
     "/api/webhook/clerk",
-    "/api/webhook/stripe",
+    "/api/webhook",
+    "/api/check-subscription", // 👈 Allow it publicly
   ],
   ignoredRoutes: [
     "/api/webhook/clerk",
-    "/api/webhook/stripe",
+    "/api/webhook",
   ],
 
   async afterAuth(auth, req) {
     const { userId, isPublicRoute } = auth;
     const url = new URL(req.url);
 
-    // Not signed in and not on public route
     if (!userId && !isPublicRoute) {
       const signInUrl = new URL("/sign-in", req.url);
       signInUrl.searchParams.set("redirect_url", req.url);
       return Response.redirect(signInUrl);
     }
 
-    // If signed in and accessing /app, verify subscription
     const isAppRoute = url.pathname.startsWith("/app");
 
     if (userId && isAppRoute) {
       try {
-        const subscription = await checkSubscriptionStatus(userId);
+        const subCheck = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/check-subscription`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: req.headers.get("cookie") || "",
+          },
+        });
 
-        if (!subscription?.hasActiveSubscription) {
+        const result = await subCheck.json();
+
+        if (!result.hasActiveSubscription) {
           return Response.redirect(new URL("/pricing", req.url));
         }
-      } catch (error) {
+      } catch (err) {
         if (process.env.NODE_ENV !== "production") {
-          console.error("Failed to verify subscription:", error);
+          console.error("❌ Middleware subscription check failed:", err);
         }
         return Response.redirect(new URL("/pricing", req.url));
       }

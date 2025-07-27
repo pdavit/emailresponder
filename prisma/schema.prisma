@@ -1,24 +1,29 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// This is your Prisma schema file.
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated/prisma"
 }
 
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
 model User {
-  id              String    @id @default(cuid())
-  email           String    @unique
-  stripeCustomerId String?  @unique
-  subscriptionId  String?
-  subscriptionStatus String? // 'active', 'canceled', 'past_due', 'unpaid', etc.
-  subscriptionEndDate DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  history         History[]
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  stripeCustomerId    String?   @unique
+  subscriptionId      String?   // Stripe Subscription ID
+  subscriptionStatus  String?   // e.g. 'active', 'canceled', 'past_due', etc.
+  subscriptionEndDate DateTime? // When the subscription ends
+  stripePriceId       String?   // Which Stripe price/plan user is subscribed to
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relations
+  history             History[]
 }
 
 model History {
@@ -29,11 +34,8 @@ model History {
   language      String
   tone          String
   createdAt     DateTime @default(now())
+
+  // Relations
   userId        String?
   user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
 }

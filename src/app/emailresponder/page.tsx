@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { CheckIcon, ClipboardIcon, ArrowPathIcon, TrashIcon, MagnifyingGlassIcon, ClockIcon, EyeIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { useSearchParams } from 'next/navigation';
 
 const languages = [
   { value: 'english', label: 'English' },
@@ -27,6 +28,7 @@ interface HistoryItem {
 }
 
 export default function EmailResponderPage() {
+  const searchParams = useSearchParams();
   const [subject, setSubject] = useState('');
   const [originalEmail, setOriginalEmail] = useState('');
   const [language, setLanguage] = useState('english');
@@ -55,13 +57,12 @@ export default function EmailResponderPage() {
   // Subscription check state
   const [isCheckingSubscription, setIsCheckingSubscription] = useState(true);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
-  // Check subscription on component mount
-  useEffect(() => {
-    checkSubscription();
-  }, []);
+  // Check if user just completed payment
+  const isSuccessFromStripe = searchParams.get('success') === 'true';
 
-  const checkSubscription = async () => {
+  const checkSubscription = useCallback(async () => {
     try {
       setSubscriptionError(null);
       const response = await fetch('/api/subscription-status');
@@ -70,25 +71,72 @@ export default function EmailResponderPage() {
         const data = await response.json();
         
         if (!data.hasActiveSubscription) {
-          // Redirect to Stripe checkout
-          window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
+          // If user just completed payment, wait a bit for webhook to process
+          if (isSuccessFromStripe) {
+            console.log('Payment completed, waiting for webhook processing...');
+            // Wait 3 seconds for webhook to process, then check again
+            setTimeout(async () => {
+              const retryResponse = await fetch('/api/subscription-status');
+              if (retryResponse.ok) {
+                const retryData = await retryResponse.json();
+                if (retryData.hasActiveSubscription) {
+                  setShowSuccessMessage(true);
+                  setIsCheckingSubscription(false);
+                  return;
+                }
+              }
+              // If still no subscription after retry, redirect to checkout
+              window.location.href = '/subscribe';
+            }, 3000);
+            return;
+          }
+          
+          // Not from Stripe success, redirect to subscribe page
+          window.location.href = '/subscribe';
           return;
+        } else {
+          // User has active subscription
+          if (isSuccessFromStripe) {
+            setShowSuccessMessage(true);
+          }
         }
       } else {
-        // If there's an error, redirect to Stripe checkout as fallback
-        window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
+        // If there's an error and user just completed payment, don't redirect immediately
+        if (isSuccessFromStripe) {
+          console.log('Error checking subscription after payment, waiting...');
+          setTimeout(() => {
+            window.location.href = '/subscribe';
+          }, 5000);
+          return;
+        }
+        // Not from Stripe success, redirect to subscribe page
+        window.location.href = '/subscribe';
         return;
       }
     } catch (error) {
       console.error('Error checking subscription:', error);
       setSubscriptionError('Failed to check subscription status');
-      // On error, redirect to Stripe checkout as fallback
-      window.location.href = 'https://buy.stripe.com/28E5kD6EFbEwgeA8ng2B201';
+      
+      // If user just completed payment, wait before redirecting
+      if (isSuccessFromStripe) {
+        setTimeout(() => {
+          window.location.href = '/subscribe';
+        }, 5000);
+        return;
+      }
+      
+      // Not from Stripe success, redirect to subscribe page
+      window.location.href = '/subscribe';
       return;
     } finally {
       setIsCheckingSubscription(false);
     }
-  };
+  }, [isSuccessFromStripe]);
+
+  // Check subscription on component mount
+  useEffect(() => {
+    checkSubscription();
+  }, [checkSubscription]);
 
   // Load history on component mount (only after subscription check)
   useEffect(() => {
@@ -326,6 +374,25 @@ export default function EmailResponderPage() {
             Generate professional email replies with AI assistance
           </p>
         </div>
+
+        {/* Success Message */}
+        {showSuccessMessage && (
+          <div className="mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 px-4 py-3 rounded-lg">
+            <div className="flex items-center">
+              <CheckIcon className="h-5 w-5 mr-2" />
+              <span className="font-medium">Payment Successful!</span>
+            </div>
+            <p className="mt-1 text-sm">
+              Your subscription has been activated. You can now use all features of Email Responder.
+            </p>
+            <button
+              onClick={() => setShowSuccessMessage(false)}
+              className="mt-2 text-sm underline hover:no-underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Delete All Confirmation Modal */}
         {showDeleteModal && (

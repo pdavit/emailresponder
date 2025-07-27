@@ -1,75 +1,53 @@
-import { db } from "@/lib/db";
-import { subscriptions } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { prisma } from "@/lib/prisma";
+import { stripe } from "@/lib/stripe";
 
 /**
- * Check the user's subscription status.
+ * Updates the user's subscription data in the database
+ * after receiving a Stripe webhook event.
  */
-/**
- * Check the user's subscription status.
- */
-export async function checkSubscriptionStatus(userId: string) {
-  const [subscription] = await db
-    .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId));
+export async function updateUserSubscription(subscription: any) {
+  const customerId = subscription.customer as string;
 
-  if (!subscription) {
-    return {
-      hasActiveSubscription: false,
-      subscriptionStatus: "none",
-      subscriptionEndDate: null,
-    };
+  const user = await prisma.user.findFirst({
+    where: {
+      stripeCustomerId: customerId,
+    },
+  });
+
+  if (!user) {
+    console.error("❌ No user found for customer ID:", customerId);
+    return;
   }
 
-  const endsAt = subscription.endsAt as Date | null;
-  const isActive = endsAt && endsAt.getTime() + 86_400_000 > Date.now();
+  const subscriptionStatus = subscription.status as string;
+  const stripeSubscriptionId = subscription.id as string;
 
-  return {
-    hasActiveSubscription: !!isActive,
-    subscriptionStatus: isActive ? "active" : "expired",
-    subscriptionEndDate: endsAt,
-  };
+  await prisma.user.update({
+    where: {
+      id: user.id,
+    },
+    data: {
+      stripeSubscriptionId,
+      stripeSubscriptionStatus: subscriptionStatus,
+    },
+  });
+
+  console.log(`✅ Updated subscription for ${user.email}: ${subscriptionStatus}`);
 }
 
 /**
- * Create or update the user's subscription.
+ * Checks if a user has an active Stripe subscription.
+ * Useful for protecting premium routes.
  */
-export async function updateUserSubscription(
-  userId: string,
-  data: {
-    stripeCustomerId?: string;
-    stripeSubscriptionId?: string;
-    stripePriceId?: string;
-    stripeCurrentPeriodEnd?: number;
-  }
-) {
-  const [existing] = await db
-    .select()
-    .from(subscriptions)
-    .where(eq(subscriptions.userId, userId));
+export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: {
+      stripeSubscriptionStatus: true,
+    },
+  });
 
-  const endsAtDate = data.stripeCurrentPeriodEnd
-    ? new Date(data.stripeCurrentPeriodEnd * 1000)
-    : undefined;
-
-  if (existing) {
-    await db
-      .update(subscriptions)
-      .set({
-        stripeCustomerId: data.stripeCustomerId,
-        stripeSubscriptionId: data.stripeSubscriptionId,
-        stripePriceId: data.stripePriceId,
-        endsAt: endsAtDate,
-      })
-      .where(eq(subscriptions.userId, userId));
-  } else {
-    await db.insert(subscriptions).values({
-      userId,
-      stripeCustomerId: data.stripeCustomerId,
-      stripeSubscriptionId: data.stripeSubscriptionId,
-      stripePriceId: data.stripePriceId,
-      endsAt: endsAtDate,
-    });
-  }
+  return user?.stripeSubscriptionStatus === "active";
 }
