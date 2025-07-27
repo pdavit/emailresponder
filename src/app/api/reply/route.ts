@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     
     const subscriptionStatus = await checkSubscriptionStatus(userId);
     
-    if (!subscriptionStatus.hasActiveSubscription) {
+ if (!subscriptionStatus) {
       return NextResponse.json(
         { error: 'Active subscription required' },
         { status: 403 }
