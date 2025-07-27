@@ -38,7 +38,7 @@ export default function PricingPage() {
         </p>
 
        <a
-  href="https://buy.stripe.com/28E7sL9QR23W7I46f8"
+  href="https://buy.stripe.com/28E7sL9QR23W7I46f82B202"
   target="_blank"
   rel="noopener noreferrer"
   className="block text-center bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition"
