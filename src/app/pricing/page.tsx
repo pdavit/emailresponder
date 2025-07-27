@@ -37,13 +37,14 @@ export default function PricingPage() {
           Subscribe for just <span className="font-semibold">$4.99/month</span>
         </p>
 
-        <button
-          onClick={handleSubscribe}
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition disabled:opacity-50"
-        >
-          {loading ? "Redirecting to Stripe..." : "Subscribe Now"}
-        </button>
+       <a
+  href="https://buy.stripe.com/28E7sL9QR23W7I46f8"
+  target="_blank"
+  rel="noopener noreferrer"
+  className="block text-center bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition"
+>
+  Subscribe Now – $4.99/month
+</a>
 
         <p className="text-xs text-center text-gray-400 mt-4">
           Cancel anytime. Secure checkout via Stripe.
