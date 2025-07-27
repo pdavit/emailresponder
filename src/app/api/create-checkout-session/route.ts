@@ -11,7 +11,7 @@ export async function POST() {
       return new NextResponse(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
     }
 
-   const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return new NextResponse(JSON.stringify({ error: "User not found" }), { status: 404 });
     }
@@ -21,11 +21,11 @@ export async function POST() {
       payment_method_types: ["card"],
       line_items: [
         {
-          price: process.env.STRIPE_TEST_PRICE_ID!, // ✅ Use env var instead of hardcoded value
+          price: process.env.STRIPE_LIVE_PRICE_ID!, // ✅ Using live price
           quantity: 1,
         },
       ],
-      customer_email: user.email || undefined, // ✅ Add email for Stripe auto-matching
+      customer_email: user.email || undefined,
       metadata: { userId: user.id },
       success_url: `${process.env.NEXT_PUBLIC_APP_URL}/thank-you?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
