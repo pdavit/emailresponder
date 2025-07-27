@@ -41,7 +41,7 @@ export default function ThankYouPage() {
       <div className="text-center max-w-md">
         <h1 className="text-4xl font-bold text-green-600 mb-4">🎉 Thank You!</h1>
         <p className="text-lg text-gray-700 mb-6">
-          Your subscription is confirmed. You're all set to use EmailResponder 🚀
+         Your subscription is confirmed. You&apos;re all set to use EmailResponder 🚀
         </p>
         <button
           onClick={() => router.push("/app")}
