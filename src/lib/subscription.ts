@@ -11,7 +11,7 @@ export async function updateUserSubscription(
   const customerId = subscription.customer as string;
   const subscriptionId = subscription.id;
 
-  // Determine subscription status safely
+  // Determine subscription status
   const status = 'status' in subscription ? subscription.status : null;
 
   if (!status) {
@@ -40,7 +40,7 @@ export async function updateUserSubscription(
 }
 
 /**
- * Returns true if the user has an active Stripe subscription.
+ * Returns true if the user has an active or trialing Stripe subscription.
  */
 export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
@@ -48,5 +48,5 @@ export async function checkSubscriptionStatus(userId: string): Promise<boolean> 
     select: { subscriptionStatus: true },
   });
 
-  return user?.subscriptionStatus === 'active';
+  return user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing';
 }
