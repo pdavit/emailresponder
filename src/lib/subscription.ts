@@ -1,17 +1,23 @@
-// lib/subscription.ts
 import Stripe from 'stripe';
 import { prisma } from '@/lib/prisma';
 
 /**
- * Updates the user's subscription data in the database
- * after receiving a Stripe webhook event.
+ * Updates the user's subscription information in the database.
+ * Triggered via Stripe webhook events.
  */
 export async function updateUserSubscription(
   subscription: Stripe.Subscription | Stripe.Checkout.Session
 ) {
   const customerId = subscription.customer as string;
-  const subscriptionStatus = (subscription as Stripe.Subscription).status;
-  const stripeSubscriptionId = subscription.id;
+  const subscriptionId = subscription.id;
+
+  // Determine subscription status safely
+  const status = 'status' in subscription ? subscription.status : null;
+
+  if (!status) {
+    console.error('⚠️ Subscription status is missing or invalid.');
+    return;
+  }
 
   const user = await prisma.user.findFirst({
     where: { stripeCustomerId: customerId },
@@ -23,26 +29,24 @@ export async function updateUserSubscription(
   }
 
   await prisma.user.update({
-  where: { id: user.id },
-  data: {
-    subscriptionId: stripeSubscriptionId,
-    subscriptionStatus: subscriptionStatus,
-  },
-});
+    where: { id: user.id },
+    data: {
+      subscriptionId,
+      subscriptionStatus: status,
+    },
+  });
 
-  console.log(`✅ Updated subscription for ${user.email}: ${subscriptionStatus}`);
+  console.log(`✅ Updated subscription for ${user.email}: ${status}`);
 }
 
 /**
- * Checks if a user has an active Stripe subscription.
- * Useful for protecting premium routes.
+ * Returns true if the user has an active Stripe subscription.
  */
 export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: {
-     subscriptionStatus: true,    },
+    select: { subscriptionStatus: true },
   });
 
-  return user?.stripeSubscriptionStatus === 'active';
+  return user?.subscriptionStatus === 'active';
 }
