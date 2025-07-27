@@ -1,5 +1,6 @@
-import Stripe from 'stripe';
-import { prisma } from '@/lib/prisma';
+import Stripe from "stripe";
+import { prisma } from "@/lib/prisma";
+import { stripe } from "@/lib/stripe";
 
 /**
  * Updates the user's subscription information in the database.
@@ -11,11 +12,20 @@ export async function updateUserSubscription(
   const customerId = subscription.customer as string;
   const subscriptionId = subscription.id;
 
-  // Determine subscription status
-  const status = 'status' in subscription ? subscription.status : null;
+  let status: string | null = null;
+
+  // Case 1: If it's a Subscription object
+  if ("status" in subscription) {
+    status = subscription.status;
+  }
+  // Case 2: If it's a Checkout Session – fetch the subscription manually
+  else if ("subscription" in subscription && typeof subscription.subscription === "string") {
+    const fullSub = await stripe.subscriptions.retrieve(subscription.subscription);
+    status = fullSub.status;
+  }
 
   if (!status) {
-    console.error('⚠️ Subscription status is missing or invalid.');
+    console.error("⚠️ Subscription status is missing or invalid.");
     return;
   }
 
@@ -24,7 +34,7 @@ export async function updateUserSubscription(
   });
 
   if (!user) {
-    console.error('❌ No user found for customer ID:', customerId);
+    console.error("❌ No user found for customer ID:", customerId);
     return;
   }
 
@@ -48,5 +58,5 @@ export async function checkSubscriptionStatus(userId: string): Promise<boolean> 
     select: { subscriptionStatus: true },
   });
 
-  return user?.subscriptionStatus === 'active' || user?.subscriptionStatus === 'trialing';
+  return user?.subscriptionStatus === "active" || user?.subscriptionStatus === "trialing";
 }
