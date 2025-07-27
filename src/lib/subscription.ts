@@ -41,8 +41,7 @@ export async function checkSubscriptionStatus(userId: string): Promise<boolean> 
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
-      stripeSubscriptionStatus: true,
-    },
+     subscriptionStatus: true,    },
   });
 
   return user?.stripeSubscriptionStatus === 'active';
