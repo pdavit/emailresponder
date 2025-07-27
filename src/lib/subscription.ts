@@ -5,7 +5,7 @@ import { stripe } from "@/lib/stripe";
  * Updates the user's subscription data in the database
  * after receiving a Stripe webhook event.
  */
-export async function updateUserSubscription(subscription: any) {
+export async function updateUserSubscription(subscription: Stripe.Checkout.Session) {
   const customerId = subscription.customer as string;
 
   const user = await prisma.user.findFirst({
