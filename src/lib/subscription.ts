@@ -1,20 +1,16 @@
-import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
-import { stripe } from "@/lib/stripe";
+import type Stripe from "stripe";
 
 /**
  * Updates the user's subscription information in the database.
  * Triggered via Stripe webhook events.
  */
-import type Stripe from "stripe";
-import { prisma } from "@/lib/prisma";
-
 export async function updateUserSubscription(
-  subscription: Stripe.Subscription
+  subscription: Stripe.Subscription | Stripe.Checkout.Session
 ) {
-  const customerId = subscription.customer as string;
-  const subscriptionId = subscription.id;
-  const status = subscription.status;
+  const customerId = (subscription as Stripe.Subscription).customer as string;
+  const subscriptionId = (subscription as Stripe.Subscription).id;
+  const status = (subscription as Stripe.Subscription).status;
 
   if (!status) {
     console.error("⚠️ Subscription status is missing or invalid.");
@@ -40,6 +36,7 @@ export async function updateUserSubscription(
 
   console.log(`✅ Updated subscription for ${user.email}: ${status}`);
 }
+
 /**
  * Returns true if the user has an active or trialing Stripe subscription.
  */
