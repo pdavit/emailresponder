@@ -11,7 +11,7 @@ export default authMiddleware({
     "/thank-you",
     "/api/webhook/clerk",
     "/api/webhook",
-    "/api/check-subscription", // 👈 Allow it publicly
+    "/api/subscription-status", // 👈 Allow it publicly
   ],
   ignoredRoutes: [
     "/api/webhook/clerk",
@@ -32,7 +32,7 @@ export default authMiddleware({
 
     if (userId && isAppRoute) {
       try {
-        const subCheck = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/check-subscription`, {
+       const subCheck = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/subscription-status`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
