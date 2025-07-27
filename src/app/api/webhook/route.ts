@@ -13,10 +13,9 @@ export async function POST(req: Request) {
     return new NextResponse('Webhook secret missing', { status: 500 });
   }
 
-  const body = await req.text();
-  const rawHeaders = headers();
+const body = await req.text();
+const rawHeaders = await headers(); // <- this was the missing magic
 const sig = rawHeaders.get('stripe-signature')!;
-
   let event: Stripe.Event;
 
   try {
