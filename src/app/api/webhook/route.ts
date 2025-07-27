@@ -9,8 +9,9 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 export async function POST(req: Request) {
   const body = await req.text();
- const headersList = await headers();
- const sig = headersList.get('stripe-signature')!;
+  const headersList = headers();
+  const sig = headersList.get('stripe-signature')!;
+
   let event: Stripe.Event;
 
   try {
@@ -26,16 +27,16 @@ export async function POST(req: Request) {
       const session = event.data.object as Stripe.Checkout.Session;
 
       if (session.subscription) {
-      const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
-       await updateUserSubscription(subscription);
+        const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+        await updateUserSubscription(subscription);
       }
       break;
     }
 
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
-      const sub = event.data.object as Stripe.Subscription;
-      await updateUserSubscription(sub);
+      const subscription = event.data.object as Stripe.Subscription;
+      await updateUserSubscription(subscription);
       break;
     }
 

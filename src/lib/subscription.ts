@@ -1,32 +1,29 @@
+// lib/subscription.ts
 import Stripe from 'stripe';
-import { prisma } from "@/lib/prisma";
-import { stripe } from "@/lib/stripe";
+import { prisma } from '@/lib/prisma';
 
 /**
  * Updates the user's subscription data in the database
  * after receiving a Stripe webhook event.
  */
-export async function updateUserSubscription(subscription: Stripe.Checkout.Session) {
+export async function updateUserSubscription(
+  subscription: Stripe.Subscription | Stripe.Checkout.Session
+) {
   const customerId = subscription.customer as string;
+  const subscriptionStatus = (subscription as Stripe.Subscription).status;
+  const stripeSubscriptionId = subscription.id;
 
   const user = await prisma.user.findFirst({
-    where: {
-      stripeCustomerId: customerId,
-    },
+    where: { stripeCustomerId: customerId },
   });
 
   if (!user) {
-    console.error("❌ No user found for customer ID:", customerId);
+    console.error('❌ No user found for customer ID:', customerId);
     return;
   }
 
-  const subscriptionStatus = subscription.status as string;
-  const stripeSubscriptionId = subscription.id as string;
-
   await prisma.user.update({
-    where: {
-      id: user.id,
-    },
+    where: { id: user.id },
     data: {
       stripeSubscriptionId,
       stripeSubscriptionStatus: subscriptionStatus,
@@ -42,13 +39,11 @@ export async function updateUserSubscription(subscription: Stripe.Checkout.Sessi
  */
 export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
-    where: {
-      id: userId,
-    },
+    where: { id: userId },
     select: {
       stripeSubscriptionStatus: true,
     },
   });
 
-  return user?.stripeSubscriptionStatus === "active";
+  return user?.stripeSubscriptionStatus === 'active';
 }
