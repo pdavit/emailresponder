@@ -1,3 +1,4 @@
+import Stripe from 'stripe';
 import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
 
