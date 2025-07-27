@@ -25,14 +25,14 @@ export async function DELETE(
       );
     }
     
-    const subscriptionStatus = await checkSubscriptionStatus(userId);
-    
-    if (!subscriptionStatus.hasActiveSubscription) {
-      return NextResponse.json(
-        { error: 'Active subscription required' },
-        { status: 403 }
-      );
-    }
+   const hasActiveSubscription = await checkSubscriptionStatus(userId);
+
+if (!hasActiveSubscription) {
+  return NextResponse.json(
+    { error: 'Active subscription required' },
+    { status: 403 }
+  );
+}
 
     const existingRecord = await prisma.history.findUnique({
       where: { 
