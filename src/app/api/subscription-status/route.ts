@@ -10,5 +10,5 @@ export async function GET() {
 
   const isActive = await checkSubscriptionStatus(userId);
 
-  return NextResponse.json({ isActive });
+  return NextResponse.json({ hasActiveSubscription: isActive }); // ✅ fixed key name
 }
