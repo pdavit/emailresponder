@@ -30,6 +30,20 @@ export async function POST() {
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
     });
 
+    // ✅ Save the Stripe customer ID for future webhook lookups
+    if (session.customer && typeof session.customer === "string") {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          stripeCustomerId: session.customer,
+        },
+      });
+
+      console.log("✅ Stored stripeCustomerId for user:", session.customer);
+    } else {
+      console.warn("⚠️ Session created without a customer ID");
+    }
+
     return NextResponse.json({ url: session.url });
   } catch (error) {
     console.error("❌ Checkout session error:", error);
