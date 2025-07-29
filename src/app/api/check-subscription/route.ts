@@ -1,6 +1,8 @@
 // src/app/api/check-subscription/route.ts
 import { auth } from "@clerk/nextjs";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function POST() {
@@ -11,16 +13,17 @@ export async function POST() {
       return new NextResponse(JSON.stringify({ hasActiveSubscription: false }), { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        subscriptionStatus: true,
-      },
-    });
+    const result = await db
+      .select({ subscriptionStatus: users.subscriptionStatus })
+      .from(users)
+      .where(eq(users.id, userId));
 
-   const isActive =
-    user?.subscriptionStatus === "active" ||
-    user?.subscriptionStatus === "trialing";
+    const user = result[0];
+
+    const isActive =
+      user?.subscriptionStatus === "active" ||
+      user?.subscriptionStatus === "trialing";
+
     return NextResponse.json({ hasActiveSubscription: isActive });
   } catch (error) {
     console.error("❌ Subscription check failed:", error);

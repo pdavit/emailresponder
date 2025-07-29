@@ -1,70 +1,84 @@
-// lib/subscription.ts
-
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { eq } from "drizzle-orm";
 import type Stripe from "stripe";
+import { users } from "@/db/schema";
 
 /**
- * Updates the user's subscription information in the database.
- * This is triggered by Stripe webhook events like `checkout.session.completed`
- * and `customer.subscription.created`, etc.
+ * Updates the user's subscription info in the database.
+ * Handles Stripe events like checkout.session.completed and customer.subscription.updated.
  */
 export async function updateUserSubscription(
   subscription: Stripe.Subscription | Stripe.Checkout.Session
 ) {
   try {
-    // Extract customer ID
     const customerId = subscription.customer as string;
 
-    // Try to find the user by Stripe customer ID
-    const user = await prisma.user.findFirst({
-      where: { stripeCustomerId: customerId },
-    });
+    // ✅ Find user by stripeCustomerId
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.stripeCustomerId, customerId));
 
-    if (!user) {
-      console.error("❌ No user found for customer ID:", customerId);
+    const isSubscription = "status" in subscription && "id" in subscription;
+    const subscriptionId = isSubscription ? subscription.id : null;
+    const subscriptionStatus = isSubscription ? subscription.status : null;
+
+    if (user) {
+      console.log("🔄 Updating user by stripeCustomerId:", {
+        userId: user.id,
+        subscriptionId,
+        subscriptionStatus,
+      });
+
+      await db
+        .update(users)
+        .set({
+          subscriptionId,
+          subscriptionStatus,
+        })
+        .where(eq(users.id, user.id));
+
+      console.log(`✅ Updated subscription for ${user.email}`);
       return;
     }
 
-    // Support both Subscription and Checkout.Session
-    const isSub = "status" in subscription && "id" in subscription;
+    // ❗Fallback via metadata.userId
+    const metadataUserId =
+      "metadata" in subscription ? subscription.metadata?.userId : null;
 
-    const subscriptionId = isSub ? subscription.id : undefined;
-    const subscriptionStatus = isSub ? subscription.status : undefined;
+    if (metadataUserId) {
+      console.warn("⚠️ No user by stripeCustomerId. Using metadata fallback:", metadataUserId);
 
-    // Log what we’re updating
-    console.log("🔄 Updating user:", {
-      userId: user.id,
-      subscriptionId,
-      subscriptionStatus,
-    });
+      await db
+        .update(users)
+        .set({
+          stripeCustomerId: customerId,
+          subscriptionId,
+          subscriptionStatus,
+        })
+        .where(eq(users.id, metadataUserId));
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        subscriptionId: subscriptionId ?? undefined,
-        subscriptionStatus: subscriptionStatus ?? undefined,
-      },
-    });
-
-    console.log(`✅ Updated subscription info for ${user.email}: ${subscriptionStatus}`);
+      console.log(`✅ Patched user ${metadataUserId} with Stripe subscription info`);
+    } else {
+      console.error("❌ Could not update subscription — no user match or metadata fallback");
+    }
   } catch (error) {
     console.error("❌ Failed to update user subscription:", error);
   }
 }
 
 /**
- * Checks if the user has an active or trialing subscription.
- * Used to control access in middleware/API.
+ * Checks if a user has an active or trialing subscription.
  */
 export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { subscriptionStatus: true },
-    });
+    const [user] = await db
+      .select({ subscriptionStatus: users.subscriptionStatus })
+      .from(users)
+      .where(eq(users.id, userId));
 
     const status = user?.subscriptionStatus ?? "none";
-    console.log("🧠 Checking user subscription status:", status);
+    console.log("🧠 Subscription status check:", { userId, status });
 
     return ["active", "trialing"].includes(status);
   } catch (error) {

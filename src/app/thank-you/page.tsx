@@ -15,7 +15,7 @@ export default function ThankYouPage() {
     }
 
     // ✅ Validate the session with our backend
-    fetch("/api/validate-session", {
+   /* fetch("/api/validate-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),
@@ -27,7 +27,9 @@ export default function ThankYouPage() {
       .catch((err) => {
         console.error("❌ Error validating session:", err);
         router.replace("/pricing");
-      });
+      }); */
+// 🧪 Temporarily skip validation to test the redirect
+console.log("🧪 Skipping session validation temporarily.");
 
     const timer = setTimeout(() => {
       router.push("/app");
