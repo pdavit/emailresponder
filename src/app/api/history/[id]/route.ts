@@ -7,9 +7,9 @@ import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } } // <-- no Promise needed here
+  context: { params: { id: string } }
 ) {
-  const id = parseInt(params.id);
+  const id = parseInt(context.params.id);
   if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
   }

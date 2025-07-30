@@ -1,5 +1,5 @@
 // src/db/schema.ts
-import { pgTable, text, timestamp, uuid, boolean } from "drizzle-orm/pg-core"; // <- added boolean
+import { pgTable, text, timestamp, uuid, boolean, serial } from "drizzle-orm/pg-core";
 
 export const users = pgTable("User", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -11,4 +11,12 @@ export const users = pgTable("User", {
   stripePriceId: text("stripe_price_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ✅ NEW: export history table
+export const history = pgTable("History", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
