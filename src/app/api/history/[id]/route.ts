@@ -8,7 +8,7 @@ import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function DELETE(
   req: NextRequest,
-  context: NextApiRequestContext // ✅ This is the golden ticket!
+  { params }: { params: { id: string } }
 ) {
   const id = parseInt(context.params.id, 10);
 
