@@ -7,10 +7,12 @@ import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } } // ✅ This is the right format
+  context: { params: Record<string, string> } // ✅ This is the safe universal type
 ) {
-  const id = parseInt(params.id, 10);
-  if (isNaN(id)) {
+  const { id } = context.params;
+  const parsedId = parseInt(id, 10);
+
+  if (isNaN(parsedId)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
   }
 
@@ -25,20 +27,20 @@ export async function DELETE(
       return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
     }
 
-    const match = await db
+    const existing = await db
       .select()
       .from(history)
-      .where(and(eq(history.id, id), eq(history.userId, userId)))
+      .where(and(eq(history.id, parsedId), eq(history.userId, userId)))
       .limit(1);
 
-    if (!match.length) {
+    if (!existing.length) {
       return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
-    await db.delete(history).where(eq(history.id, id));
+    await db.delete(history).where(eq(history.id, parsedId));
     return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
   } catch (err) {
-    console.error('❌ DELETE /history/:id failed:', err);
+    console.error('❌ Failed to delete history:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
