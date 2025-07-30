@@ -5,9 +5,12 @@ import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
+// ✅ Custom type for route params
+type Params = { params: { id: string } };
+
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: Params
 ) {
   const id = parseInt(params.id, 10);
 
@@ -26,21 +29,20 @@ export async function DELETE(
       return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
     }
 
-    const record = await db
+    const match = await db
       .select()
       .from(history)
       .where(and(eq(history.id, id), eq(history.userId, userId)))
       .limit(1);
 
-    if (!record.length) {
+    if (!match.length) {
       return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
     await db.delete(history).where(eq(history.id, id));
-
-    return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
-  } catch (error) {
-    console.error('❌ Failed to delete history record:', error);
+    return NextResponse.json({ message: 'Deleted successfully' }, { status: 200 });
+  } catch (err) {
+    console.error('❌ DELETE error:', err);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
