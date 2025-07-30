@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { NextApiRequestContext } from 'next';
 
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
