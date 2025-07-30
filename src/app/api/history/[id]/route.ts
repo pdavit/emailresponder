@@ -5,11 +5,13 @@ import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
+// ✅ App Router-compliant signature
 export async function DELETE(
-  request: NextRequest,
-  context: { params: { id: string } }
+  req: NextRequest,
+  { params }: { params: { id: string } }
 ) {
-  const id = parseInt(context.params.id);
+  const id = parseInt(params.id);
+
   if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
   }
@@ -25,17 +27,18 @@ export async function DELETE(
       return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
     }
 
-    const matchingRecord = await db
+    const record = await db
       .select()
       .from(history)
       .where(and(eq(history.id, id), eq(history.userId, userId)))
       .limit(1);
 
-    if (!matchingRecord.length) {
+    if (!record.length) {
       return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
     await db.delete(history).where(eq(history.id, id));
+
     return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
   } catch (error) {
     console.error('❌ Error deleting history record:', error);
