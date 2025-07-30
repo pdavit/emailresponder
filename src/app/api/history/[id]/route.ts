@@ -1,3 +1,4 @@
+// src/app/api/history/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
@@ -5,16 +6,11 @@ import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
-interface Context {
-  params: { id: string };
-}
-
 export async function DELETE(
   req: NextRequest,
-  { params }: Context
+  { params }: { params: { id: string } } // ✅ CORRECT: this is the expected shape
 ) {
   const id = parseInt(params.id);
-
   if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
   }
@@ -30,18 +26,17 @@ export async function DELETE(
       return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
     }
 
-    const record = await db
+    const matchingRecord = await db
       .select()
       .from(history)
       .where(and(eq(history.id, id), eq(history.userId, userId)))
       .limit(1);
 
-    if (!record.length) {
+    if (!matchingRecord.length) {
       return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
     await db.delete(history).where(eq(history.id, id));
-
     return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
   } catch (error) {
     console.error('❌ Error deleting history record:', error);
