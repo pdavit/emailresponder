@@ -1,5 +1,7 @@
 import { stripe } from "@/lib/stripe";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/lib/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { auth } from "@clerk/nextjs";
 import { NextResponse } from "next/server";
 
@@ -18,14 +20,13 @@ export async function POST(req: Request) {
       return new NextResponse(JSON.stringify({ error: "Invalid session" }), { status: 400 });
     }
 
-    // Optional: verify that session email matches user
     const stripeCustomerId = session.customer;
 
-    // Update user record with Stripe Customer ID if not already stored
-    await prisma.user.update({
-      where: { id: userId },
-      data: { stripeCustomerId }
-    });
+    // Update user in Drizzle
+    await db
+      .update(users)
+      .set({ stripeCustomerId })
+      .where(eq(users.id, userId));
 
     return NextResponse.json({ success: true });
   } catch (err) {

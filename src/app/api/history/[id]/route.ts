@@ -1,55 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { prisma } from '@/lib/prisma';
+import { db } from '@/lib/db';
+import { history } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } } // <-- no Promise needed here
 ) {
-  const { id } = await params;
-  const parsedId = parseInt(id);
-
-  if (isNaN(parsedId)) {
+  const id = parseInt(params.id);
+  if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
   }
 
   try {
-    // Check subscription status first
     const { userId } = await auth();
-    
     if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-   const hasActiveSubscription = await checkSubscriptionStatus(userId);
 
-if (!hasActiveSubscription) {
-  return NextResponse.json(
-    { error: 'Active subscription required' },
-    { status: 403 }
-  );
-}
+    const hasActiveSubscription = await checkSubscriptionStatus(userId);
+    if (!hasActiveSubscription) {
+      return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
+    }
 
-    const existingRecord = await prisma.history.findUnique({
-      where: { 
-        id: parsedId,
-        userId: userId, // Only allow deletion of user's own records
-      },
-    });
+    const matchingRecord = await db
+      .select()
+      .from(history)
+      .where(and(eq(history.id, id), eq(history.userId, userId)))
+      .limit(1);
 
-    if (!existingRecord) {
+    if (!matchingRecord.length) {
       return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
-    await prisma.history.delete({ where: { id: parsedId } });
-
+    await db.delete(history).where(eq(history.id, id));
     return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
   } catch (error) {
-    console.error('Error deleting history record:', error);
+    console.error('❌ Error deleting history record:', error);
     return NextResponse.json({ error: 'Failed to delete history record' }, { status: 500 });
   }
 }
