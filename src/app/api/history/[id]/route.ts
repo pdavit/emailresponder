@@ -5,11 +5,17 @@ import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
+type Context = {
+  params: {
+    id: string;
+  };
+};
+
 export async function DELETE(
   req: NextRequest,
-  context: { params: { id: string } } // ✅ Keep it inline like this
+  { params }: Context
 ) {
-  const id = parseInt(context.params.id, 10);
+  const id = parseInt(params.id, 10);
 
   if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
