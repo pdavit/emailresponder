@@ -5,10 +5,13 @@ import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
-// ✅ App Router-compliant signature
+interface Context {
+  params: { id: string };
+}
+
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: Context
 ) {
   const id = parseInt(params.id);
 
