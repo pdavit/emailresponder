@@ -2,16 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
-type RouteParams = {
-  params: {
-    id: string;
-  };
-};
-
-export async function DELETE(req: NextRequest, { params }: RouteParams) {
-  const id = parseInt(params.id, 10);
+export async function DELETE(
+  req: NextRequest,
+  context: { params: { id: string } }
+) {
+  const id = parseInt(context.params.id, 10);
 
   if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
@@ -25,7 +22,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     const deleted = await db
       .delete(history)
-      .where(eq(history.id, id))
+      .where(and(eq(history.id, id)))
       .returning();
 
     return NextResponse.json({ success: true, deleted });
