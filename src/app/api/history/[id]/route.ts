@@ -2,19 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
-import { checkSubscriptionStatus } from '@/lib/subscription';
+import { eq } from 'drizzle-orm';
 
-type Context = {
+type RouteParams = {
   params: {
     id: string;
   };
 };
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: Context
-) {
+export async function DELETE(req: NextRequest, { params }: RouteParams) {
   const id = parseInt(params.id, 10);
 
   if (isNaN(id)) {
@@ -27,25 +23,16 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const hasActiveSubscription = await checkSubscriptionStatus(userId);
-    if (!hasActiveSubscription) {
-      return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
-    }
+    const deleted = await db
+      .delete(history)
+      .where(eq(history.id, id))
+      .returning();
 
-    const match = await db
-      .select()
-      .from(history)
-      .where(and(eq(history.id, id), eq(history.userId, userId)))
-      .limit(1);
-
-    if (!match.length) {
-      return NextResponse.json({ error: 'History record not found' }, { status: 404 });
-    }
-
-    await db.delete(history).where(eq(history.id, id));
-    return NextResponse.json({ message: 'Deleted successfully' }, { status: 200 });
+    return NextResponse.json({ success: true, deleted });
   } catch (err) {
-    console.error('❌ DELETE error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Something went wrong', details: (err as Error).message },
+      { status: 500 }
+    );
   }
 }
