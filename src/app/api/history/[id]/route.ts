@@ -5,14 +5,11 @@ import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { checkSubscriptionStatus } from '@/lib/subscription';
 
-// ✅ Custom type for route params
-type Params = { params: { id: string } };
-
 export async function DELETE(
   req: NextRequest,
-  { params }: Params
+  context: { params: { id: string } } // ✅ Keep it inline like this
 ) {
-  const id = parseInt(params.id, 10);
+  const id = parseInt(context.params.id, 10);
 
   if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
