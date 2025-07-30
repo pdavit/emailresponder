@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { NextApiRequestContext } from 'next';
+
 import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
@@ -7,12 +9,11 @@ import { checkSubscriptionStatus } from '@/lib/subscription';
 
 export async function DELETE(
   req: NextRequest,
-  context: { params: Record<string, string> } // ✅ This is the safe universal type
+  context: NextApiRequestContext // ✅ This is the golden ticket!
 ) {
-  const { id } = context.params;
-  const parsedId = parseInt(id, 10);
+  const id = parseInt(context.params.id, 10);
 
-  if (isNaN(parsedId)) {
+  if (isNaN(id)) {
     return NextResponse.json({ error: 'Invalid ID format' }, { status: 400 });
   }
 
@@ -27,20 +28,20 @@ export async function DELETE(
       return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
     }
 
-    const existing = await db
+    const match = await db
       .select()
       .from(history)
-      .where(and(eq(history.id, parsedId), eq(history.userId, userId)))
+      .where(and(eq(history.id, id), eq(history.userId, userId)))
       .limit(1);
 
-    if (!existing.length) {
+    if (!match.length) {
       return NextResponse.json({ error: 'History record not found' }, { status: 404 });
     }
 
-    await db.delete(history).where(eq(history.id, parsedId));
-    return NextResponse.json({ message: 'History record deleted successfully' }, { status: 200 });
+    await db.delete(history).where(eq(history.id, id));
+    return NextResponse.json({ message: 'Deleted successfully' }, { status: 200 });
   } catch (err) {
-    console.error('❌ Failed to delete history:', err);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('❌ DELETE error:', err);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
