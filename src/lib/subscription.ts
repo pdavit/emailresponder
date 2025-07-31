@@ -3,32 +3,32 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import Stripe from "stripe";
 
+// Define expected structure for Stripe metadata
 type SubscriptionMetadata = {
   userId?: string;
   email?: string;
 };
 
 /**
- * Syncs a Stripe subscription to your database,
- * updating an existing user or creating a new one if not found.
+ * Updates or creates a user record in the database using Stripe subscription data.
+ * Ensures that the subscription info is correctly synced for access control.
  */
 export async function updateUserSubscription(subscription: Stripe.Subscription): Promise<void> {
   const metadata = subscription.metadata as SubscriptionMetadata;
   const userId = metadata?.userId;
   const email = metadata?.email ?? "";
-
-  if (!userId) {
-    console.error("❌ updateUserSubscription: Missing userId in metadata.");
-    return;
-  }
-
   const stripeCustomerId =
     typeof subscription.customer === "string"
       ? subscription.customer
       : subscription.customer?.id;
-
   const subscriptionId = subscription.id;
   const subscriptionStatus = subscription.status;
+  const now = new Date();
+
+  if (!userId) {
+    console.error("❌ updateUserSubscription: Missing userId in Stripe metadata.");
+    return;
+  }
 
   if (!stripeCustomerId) {
     console.error("❌ updateUserSubscription: Missing Stripe customer ID.");
@@ -38,8 +38,6 @@ export async function updateUserSubscription(subscription: Stripe.Subscription):
   const existingUser = await db.query.users.findFirst({
     where: eq(users.id, userId),
   });
-
-  const now = new Date();
 
   if (existingUser) {
     await db
@@ -52,7 +50,7 @@ export async function updateUserSubscription(subscription: Stripe.Subscription):
       })
       .where(eq(users.id, userId));
 
-    console.log(`✅ Updated subscription for user ${userId}`);
+    console.log(`✅ Subscription updated for user: ${userId}`);
   } else {
     await db.insert(users).values({
       id: userId,
@@ -64,17 +62,25 @@ export async function updateUserSubscription(subscription: Stripe.Subscription):
       updatedAt: now,
     });
 
-    console.log(`✅ Created new user ${userId} with subscription`);
+    console.log(`✅ New user created with subscription: ${userId}`);
   }
 }
 
 /**
- * Checks whether the user's subscription is active.
+ * Validates whether a user has access based on their subscription status.
+ * Accepts both 'active' and 'trialing' as valid subscription states.
  */
 export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
   const user = await db.query.users.findFirst({
     where: eq(users.id, userId),
   });
 
-  return user?.subscriptionStatus === "active";
+  const status = user?.subscriptionStatus ?? "";
+  const isValid = ["active", "trialing"].includes(status);
+
+  if (!isValid) {
+    console.warn(`⚠️ User ${userId} has invalid or inactive subscription status: ${status}`);
+  }
+
+  return isValid;
 }
