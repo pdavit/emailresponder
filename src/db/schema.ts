@@ -2,13 +2,12 @@ import {
   pgTable,
   text,
   timestamp,
-  uuid,
   serial,
 } from "drizzle-orm/pg-core";
 
-// 🧑 Users table
+// 👤 Users table (Clerk-compatible: text ID instead of UUID)
 export const users = pgTable("User", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: text("id").primaryKey(), // 🔁 CHANGED: uuid → text for Clerk user IDs
   email: text("email").notNull(),
   stripeCustomerId: text("stripe_customer_id"),
   subscriptionId: text("subscription_id"),
@@ -19,18 +18,17 @@ export const users = pgTable("User", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// 📜 History table — fully expanded for insert compatibility
+// 📨 History table — stores all email interaction data
 export const history = pgTable("History", {
   id: serial("id").primaryKey(),
 
-  userId: uuid("user_id").notNull(),
+  userId: text("user_id").notNull(), // 🔁 CHANGED: uuid → text for Clerk IDs
 
   subject: text("subject"),
   originalEmail: text("original_email"),
   reply: text("reply"),
   language: text("language"),
   tone: text("tone"),
-
   message: text("message").notNull(),
 
   createdAt: timestamp("created_at").defaultNow(),
