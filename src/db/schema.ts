@@ -3,10 +3,10 @@ import {
   text,
   timestamp,
   uuid,
-  boolean,
   serial,
 } from "drizzle-orm/pg-core";
 
+// 🧑 Users table
 export const users = pgTable("User", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull(),
@@ -19,21 +19,19 @@ export const users = pgTable("User", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// 📜 History table — fully expanded for insert compatibility
 export const history = pgTable("History", {
   id: serial("id").primaryKey(),
 
-  // ✅ required for user association
   userId: uuid("user_id").notNull(),
 
-  // ✅ new fields to support your POST logic
   subject: text("subject"),
   originalEmail: text("original_email"),
   reply: text("reply"),
   language: text("language"),
+  tone: text("tone"),
 
-  // ✅ required field
   message: text("message").notNull(),
 
-  // ✅ timestamp
   createdAt: timestamp("created_at").defaultNow(),
 });
