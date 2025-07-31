@@ -7,19 +7,23 @@ import Stripe from "stripe";
  * Updates or creates a user in the DB using Stripe subscription metadata
  */
 export async function updateUserSubscription(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.userId;
+  const metadata = subscription.metadata;
+  const userId = metadata?.userId;
+  const email = metadata?.email ?? "";
 
   if (!userId) {
     console.error("❌ updateUserSubscription: Missing userId in metadata.");
     return;
   }
 
-  const stripeCustomerId = subscription.customer as string;
+  const stripeCustomerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
   const subscriptionId = subscription.id;
   const subscriptionStatus = subscription.status;
 
-  // Optional: extract email from customer details (if set)
-  const email = subscription.metadata?.email || "";
+  if (!stripeCustomerId) {
+    console.error("❌ updateUserSubscription: Missing Stripe customer ID.");
+    return;
+  }
 
   const existingUser = await db.query.users.findFirst({
     where: eq(users.id, userId),
@@ -48,6 +52,6 @@ export async function updateUserSubscription(subscription: Stripe.Subscription) 
       updatedAt: new Date(),
     });
 
-    console.log(`✅ Created user ${userId} with subscription`);
+    console.log(`✅ Created new user ${userId} with subscription`);
   }
 }
