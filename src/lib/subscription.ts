@@ -3,11 +3,17 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import Stripe from "stripe";
 
+type SubscriptionMetadata = {
+  userId?: string;
+  email?: string;
+};
+
 /**
- * Updates or creates a user in the DB using Stripe subscription metadata
+ * Syncs a Stripe subscription to your database,
+ * updating an existing user or creating a new one if not found.
  */
-export async function updateUserSubscription(subscription: Stripe.Subscription) {
-  const metadata = subscription.metadata;
+export async function updateUserSubscription(subscription: Stripe.Subscription): Promise<void> {
+  const metadata = subscription.metadata as SubscriptionMetadata;
   const userId = metadata?.userId;
   const email = metadata?.email ?? "";
 
@@ -16,7 +22,11 @@ export async function updateUserSubscription(subscription: Stripe.Subscription) 
     return;
   }
 
-  const stripeCustomerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
+  const stripeCustomerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer?.id;
+
   const subscriptionId = subscription.id;
   const subscriptionStatus = subscription.status;
 
@@ -29,6 +39,8 @@ export async function updateUserSubscription(subscription: Stripe.Subscription) 
     where: eq(users.id, userId),
   });
 
+  const now = new Date();
+
   if (existingUser) {
     await db
       .update(users)
@@ -36,7 +48,7 @@ export async function updateUserSubscription(subscription: Stripe.Subscription) 
         stripeCustomerId,
         subscriptionId,
         subscriptionStatus,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(users.id, userId));
 
@@ -48,10 +60,21 @@ export async function updateUserSubscription(subscription: Stripe.Subscription) 
       stripeCustomerId,
       subscriptionId,
       subscriptionStatus,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     });
 
     console.log(`✅ Created new user ${userId} with subscription`);
   }
+}
+
+/**
+ * Checks whether the user's subscription is active.
+ */
+export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+
+  return user?.subscriptionStatus === "active";
 }
