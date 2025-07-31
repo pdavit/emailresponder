@@ -1,8 +1,12 @@
 // app/api/webhook/route.ts
+
 import { stripe } from '@/lib/stripe';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { db } from '@/lib/db';
+import { users } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { updateUserSubscription } from '@/lib/subscription';
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -13,67 +17,95 @@ export async function POST(req: Request) {
     return new NextResponse('Webhook secret missing', { status: 500 });
   }
 
-const body = await req.text();
-const rawHeaders = await headers(); // <- this was the missing magic
-const sig = rawHeaders.get('stripe-signature')!;
+  const body = await req.text();
+  const rawHeaders = headers();
+  const sig = rawHeaders.get('stripe-signature')!;
+
   let event: Stripe.Event;
 
   try {
     event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
     console.log('📦 Incoming event:', event.type);
-    console.log('🧠 Full event object:', JSON.stringify(event, null, 2));
   } catch (err) {
     console.error('❌ Webhook signature verification failed:', (err as Error).message);
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
   }
 
+  // 🔁 Central subscription handler
+  async function handleSubscription(subscription: Stripe.Subscription, userId?: string) {
+    if (!userId) {
+      console.error('❌ Could not update subscription — missing user ID');
+      return;
+    }
+
+    const existing = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (existing) {
+      await db.update(users)
+        .set({
+          subscriptionId: subscription.id,
+          subscriptionStatus: subscription.status,
+          stripeCustomerId: subscription.customer as string,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId));
+    } else {
+      await db.insert(users).values({
+        id: userId,
+        email: subscription?.metadata?.email ?? '',
+        subscriptionId: subscription.id,
+        subscriptionStatus: subscription.status,
+        stripeCustomerId: subscription.customer as string,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+
+    await updateUserSubscription(subscription); // optional if needed elsewhere
+  }
+
+  // 🎯 Handle event types
   switch (event.type) {
     case 'checkout.session.completed': {
-      console.log('✅ Subscription successful:', event.id);
       const session = event.data.object as Stripe.Checkout.Session;
-      console.log('🧾 Session object:', session);
+      console.log('🧾 Session:', session);
 
-      if (session.subscription) {
-        try {
-          const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
-          console.log('📦 Retrieved subscription:', subscription);
+      const userId = session.metadata?.userId;
+      const subscriptionId = session.subscription as string;
 
-          await updateUserSubscription(subscription);
-          console.log('✅ Subscription saved in database!');
-        } catch (error) {
-          console.error('❌ Failed to update subscription:', error);
-        }
-      } else {
-        console.warn('⚠️ No subscription found in checkout session.');
+      if (!subscriptionId || !userId) {
+        console.error('❌ Missing subscription or userId in session');
+        break;
       }
-
-      break;
-    }
-
-    case 'customer.subscription.created': {
-      const subscription = event.data.object as Stripe.Subscription;
-      console.log('📦 New subscription created:', subscription);
 
       try {
-        await updateUserSubscription(subscription);
-        console.log('✅ Subscription saved to DB');
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        console.log('📦 Retrieved subscription:', subscription);
+
+        await handleSubscription(subscription, userId);
+        console.log('✅ Subscription saved in database!');
       } catch (err) {
-        console.error('❌ Failed to save subscription:', err);
+        console.error('❌ Failed to update subscription from session:', err);
       }
 
       break;
     }
 
+    case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      console.log(`🔄 Subscription ${event.type} event received`, subscription);
+      console.log(`🔄 Event: ${event.type}`, subscription);
+
+      const userId = subscription.metadata?.userId;
 
       try {
-        await updateUserSubscription(subscription);
-        console.log('✅ Subscription status updated in DB');
-      } catch (error) {
-        console.error('❌ Error updating subscription on update/delete:', error);
+        await handleSubscription(subscription, userId);
+        console.log(`✅ Subscription ${event.type} processed`);
+      } catch (err) {
+        console.error(`❌ Failed to handle ${event.type}:`, err);
       }
 
       break;
