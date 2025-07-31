@@ -1,88 +1,53 @@
 import { db } from "@/lib/db";
-import { eq } from "drizzle-orm";
-import type Stripe from "stripe";
 import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import Stripe from "stripe";
 
 /**
- * Updates the user's subscription info in the database.
- * Handles Stripe events like checkout.session.completed and customer.subscription.updated.
+ * Updates or creates a user in the DB using Stripe subscription metadata
  */
-export async function updateUserSubscription(
-  subscription: Stripe.Subscription | Stripe.Checkout.Session
-) {
-  try {
-    const customerId = subscription.customer as string;
+export async function updateUserSubscription(subscription: Stripe.Subscription) {
+  const userId = subscription.metadata?.userId;
 
-    // ✅ Find user by stripeCustomerId
-    const [user] = await db
-      .select()
-      .from(users)
-      .where(eq(users.stripeCustomerId, customerId));
+  if (!userId) {
+    console.error("❌ updateUserSubscription: Missing userId in metadata.");
+    return;
+  }
 
-    const isSubscription = "status" in subscription && "id" in subscription;
-    const subscriptionId = isSubscription ? subscription.id : null;
-    const subscriptionStatus = isSubscription ? subscription.status : null;
+  const stripeCustomerId = subscription.customer as string;
+  const subscriptionId = subscription.id;
+  const subscriptionStatus = subscription.status;
 
-    if (user) {
-      console.log("🔄 Updating user by stripeCustomerId:", {
-        userId: user.id,
+  // Optional: extract email from customer details (if set)
+  const email = subscription.metadata?.email || "";
+
+  const existingUser = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+
+  if (existingUser) {
+    await db
+      .update(users)
+      .set({
+        stripeCustomerId,
         subscriptionId,
         subscriptionStatus,
-      });
-
-      await db
-        .update(users)
-        .set({
-          subscriptionId,
-          subscriptionStatus,
-        })
-        .where(eq(users.id, user.id));
-
-      console.log(`✅ Updated subscription for ${user.email}`);
-      return;
-    }
-
-    // ❗Fallback via metadata.userId
-    const metadataUserId =
-      "metadata" in subscription ? subscription.metadata?.userId : null;
-
-    if (metadataUserId) {
-      console.warn("⚠️ No user by stripeCustomerId. Using metadata fallback:", metadataUserId);
-
-      await db
-        .update(users)
-        .set({
-          stripeCustomerId: customerId,
-          subscriptionId,
-          subscriptionStatus,
-        })
-        .where(eq(users.id, metadataUserId));
-
-      console.log(`✅ Patched user ${metadataUserId} with Stripe subscription info`);
-    } else {
-      console.error("❌ Could not update subscription — no user match or metadata fallback");
-    }
-  } catch (error) {
-    console.error("❌ Failed to update user subscription:", error);
-  }
-}
-
-/**
- * Checks if a user has an active or trialing subscription.
- */
-export async function checkSubscriptionStatus(userId: string): Promise<boolean> {
-  try {
-    const [user] = await db
-      .select({ subscriptionStatus: users.subscriptionStatus })
-      .from(users)
+        updatedAt: new Date(),
+      })
       .where(eq(users.id, userId));
 
-    const status = user?.subscriptionStatus ?? "none";
-    console.log("🧠 Subscription status check:", { userId, status });
+    console.log(`✅ Updated subscription for user ${userId}`);
+  } else {
+    await db.insert(users).values({
+      id: userId,
+      email,
+      stripeCustomerId,
+      subscriptionId,
+      subscriptionStatus,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
 
-    return ["active", "trialing"].includes(status);
-  } catch (error) {
-    console.error("❌ Failed to check subscription status:", error);
-    return false;
+    console.log(`✅ Created user ${userId} with subscription`);
   }
 }
