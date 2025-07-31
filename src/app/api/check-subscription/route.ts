@@ -1,5 +1,5 @@
 // src/app/api/check-subscription/route.ts
-import { auth } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server"; // ✅ use server version here
 import { db } from "@/lib/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -8,6 +8,8 @@ import { NextResponse } from "next/server";
 export async function POST() {
   try {
     const { userId } = auth();
+
+    console.log("👤 Clerk User ID:", userId);
 
     if (!userId) {
       return new NextResponse(JSON.stringify({ hasActiveSubscription: false }), { status: 401 });
