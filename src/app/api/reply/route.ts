@@ -52,14 +52,15 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await db.insert(history).values({
-        subject,
-        originalEmail,
-        reply,
-        language,
-        tone,
-        userId,
-      });
+   await db.insert(history).values({
+  subject,
+  originalEmail,
+  reply,
+  language,
+  tone,
+  message: originalEmail, // ✅ Rename this so it passes validation
+  userId,
+});
     } catch (dbError) {
       console.error('⚠️ Error saving to database:', dbError);
       // Continue with response even if database save fails
