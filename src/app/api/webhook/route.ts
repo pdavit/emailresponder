@@ -27,31 +27,33 @@ export async function POST(req: Request) {
     event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
     console.log('📦 Incoming event:', event.type);
   } catch (err) {
-    console.error('❌ Webhook signature verification failed:', (err as Error).message);
+    console.error('❌ Webhook verification failed:', (err as Error).message);
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
   }
 
-  async function handleSubscription(subscription: Stripe.Subscription, userId?: string) {
+  async function handleSubscription(subscription: Stripe.Subscription, userId: string) {
     if (!userId) {
-      console.error('❌ Missing user ID for subscription update');
+      console.error('❌ No user ID provided for subscription update');
       return;
     }
 
-    const trialEndDate = new Date(subscription.current_period_end * 1000);
+    const trialEndDate =
+      typeof subscription.current_period_end === 'number'
+        ? new Date(subscription.current_period_end * 1000)
+        : null;
+
     const priceId = subscription.items.data[0]?.price.id ?? '';
 
     const payload = {
       subscriptionId: subscription.id,
       subscriptionStatus: subscription.status,
-      stripeCustomerId: subscription.customer as string,
+      stripeCustomerId: String(subscription.customer),
       subscriptionEndDate: trialEndDate,
       stripePriceId: priceId,
       updatedAt: new Date(),
     };
 
-    const existingUser = await db.query.users.findFirst({
-      where: eq(users.id, userId),
-    });
+    const existingUser = await db.query.users.findFirst({ where: eq(users.id, userId) });
 
     if (existingUser) {
       await db.update(users).set(payload).where(eq(users.id, userId));
@@ -59,7 +61,7 @@ export async function POST(req: Request) {
       await db.insert(users).values({
         ...payload,
         id: userId,
-        email: subscription?.metadata?.email ?? '',
+        email: subscription.metadata?.email ?? '',
         createdAt: new Date(),
       });
     }
@@ -73,17 +75,17 @@ export async function POST(req: Request) {
       const userId = session.metadata?.userId;
       const subscriptionId = session.subscription as string;
 
-      if (!subscriptionId || !userId) {
-        console.error('❌ Missing subscription or userId in session metadata');
+      if (!userId || !subscriptionId) {
+        console.error('❌ Missing userId or subscriptionId in session metadata');
         break;
       }
 
       try {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
         await handleSubscription(subscription, userId);
-        console.log('✅ Subscription synced from checkout.session.completed');
+        console.log('✅ Synced after checkout.session.completed');
       } catch (err) {
-        console.error('❌ Failed during session sync:', err);
+        console.error('❌ Failed to retrieve subscription:', err);
       }
 
       break;
@@ -95,18 +97,23 @@ export async function POST(req: Request) {
       const subscription = event.data.object as Stripe.Subscription;
       const userId = subscription.metadata?.userId;
 
+      if (!userId) {
+        console.error(`❌ Missing userId in ${event.type}`);
+        break;
+      }
+
       try {
         await handleSubscription(subscription, userId);
-        console.log(`✅ Subscription ${event.type} handled`);
+        console.log(`✅ Handled ${event.type}`);
       } catch (err) {
-        console.error(`❌ Error handling ${event.type}:`, err);
+        console.error(`❌ Error in ${event.type} handler:`, err);
       }
 
       break;
     }
 
     default:
-      console.log(`📬 Unhandled event type: ${event.type}`);
+      console.log(`📬 Unhandled Stripe event: ${event.type}`);
   }
 
   return new NextResponse('Received', { status: 200 });
