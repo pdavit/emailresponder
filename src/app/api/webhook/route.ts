@@ -1,5 +1,3 @@
-// app/api/webhook/route.ts
-
 import { stripe } from '@/lib/stripe';
 import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
@@ -18,9 +16,7 @@ export async function POST(req: Request) {
   }
 
   const body = await req.text();
-  const rawHeaders = await headers();
-  const sig = rawHeaders.get('stripe-signature')!;
-
+  const sig = headers().get('stripe-signature')!;
   let event: Stripe.Event;
 
   try {
@@ -31,23 +27,35 @@ export async function POST(req: Request) {
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
   }
 
-  // 🔁 Central subscription handler
+  // 🔄 Central subscription update
   async function handleSubscription(subscription: Stripe.Subscription, userId?: string) {
     if (!userId) {
-      console.error('❌ Could not update subscription — missing user ID');
+      console.error('❌ Missing user ID for subscription update');
       return;
     }
 
-    const existing = await db.query.users.findFirst({
-      where: eq(users.id, userId),
+    const trialEndDate = new Date(subscription.current_period_end * 1000);
+    const priceId = subscription.items.data[0]?.price.id ?? '';
+
+    console.log("📥 Saving to DB:", {
+      userId,
+      subscriptionId: subscription.id,
+      subscriptionStatus: subscription.status,
+      stripeCustomerId: subscription.customer,
+      subscriptionEndDate: trialEndDate,
+      stripePriceId: priceId,
     });
 
-    if (existing) {
+    const existingUser = await db.query.users.findFirst({ where: eq(users.id, userId) });
+
+    if (existingUser) {
       await db.update(users)
         .set({
           subscriptionId: subscription.id,
           subscriptionStatus: subscription.status,
           stripeCustomerId: subscription.customer as string,
+          subscriptionEndDate: trialEndDate,
+          stripePriceId: priceId,
           updatedAt: new Date(),
         })
         .where(eq(users.id, userId));
@@ -58,36 +66,33 @@ export async function POST(req: Request) {
         subscriptionId: subscription.id,
         subscriptionStatus: subscription.status,
         stripeCustomerId: subscription.customer as string,
+        subscriptionEndDate: trialEndDate,
+        stripePriceId: priceId,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
     }
 
-    await updateUserSubscription(subscription); // optional if needed elsewhere
+    await updateUserSubscription(subscription); // optional
   }
 
-  // 🎯 Handle event types
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
-      console.log('🧾 Session:', session);
-
       const userId = session.metadata?.userId;
       const subscriptionId = session.subscription as string;
 
       if (!subscriptionId || !userId) {
-        console.error('❌ Missing subscription or userId in session');
+        console.error('❌ Missing subscription or userId in session metadata');
         break;
       }
 
       try {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-        console.log('📦 Retrieved subscription:', subscription);
-
         await handleSubscription(subscription, userId);
-        console.log('✅ Subscription saved in database!');
+        console.log('✅ Subscription synced from checkout.session.completed');
       } catch (err) {
-        console.error('❌ Failed to update subscription from session:', err);
+        console.error('❌ Failed during session sync:', err);
       }
 
       break;
@@ -97,15 +102,13 @@ export async function POST(req: Request) {
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      console.log(`🔄 Event: ${event.type}`, subscription);
-
       const userId = subscription.metadata?.userId;
 
       try {
         await handleSubscription(subscription, userId);
-        console.log(`✅ Subscription ${event.type} processed`);
+        console.log(`✅ Subscription ${event.type} handled`);
       } catch (err) {
-        console.error(`❌ Failed to handle ${event.type}:`, err);
+        console.error(`❌ Error handling ${event.type}:`, err);
       }
 
       break;
