@@ -4,12 +4,17 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
-  const userId = params.id;
-
+export async function GET(req: Request) {
   try {
+    const url = new URL(req.url);
+    const id = url.pathname.split("/").pop(); // or use regex if you prefer: url.pathname.match(/\/subscription\/([^/]+)$/)?.[1]
+
+    if (!id) {
+      return NextResponse.json({ error: "Missing user ID" }, { status: 400 });
+    }
+
     const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
+      where: eq(users.id, id),
     });
 
     if (!user) {
