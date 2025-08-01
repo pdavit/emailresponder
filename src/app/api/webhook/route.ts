@@ -1,5 +1,4 @@
 import { stripe } from '@/lib/stripe';
-import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { db } from '@/lib/db';
@@ -16,19 +15,22 @@ export async function POST(req: Request) {
   }
 
   const body = await req.text();
- const sig = req.headers.get("stripe-signature"); // ✅ works as expected
+  const signature = req.headers.get('stripe-signature');
+
+  if (!signature) {
+    return new Response('Missing Stripe signature', { status: 400 });
+  }
 
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
     console.log('📦 Incoming event:', event.type);
   } catch (err) {
     console.error('❌ Webhook signature verification failed:', (err as Error).message);
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
   }
 
-  // 🔄 Central subscription update
   async function handleSubscription(subscription: Stripe.Subscription, userId?: string) {
     if (!userId) {
       console.error('❌ Missing user ID for subscription update');
@@ -38,43 +40,31 @@ export async function POST(req: Request) {
     const trialEndDate = new Date(subscription.current_period_end * 1000);
     const priceId = subscription.items.data[0]?.price.id ?? '';
 
-    console.log("📥 Saving to DB:", {
-      userId,
+    const payload = {
       subscriptionId: subscription.id,
       subscriptionStatus: subscription.status,
-      stripeCustomerId: subscription.customer,
+      stripeCustomerId: subscription.customer as string,
       subscriptionEndDate: trialEndDate,
       stripePriceId: priceId,
+      updatedAt: new Date(),
+    };
+
+    const existingUser = await db.query.users.findFirst({
+      where: eq(users.id, userId),
     });
 
-    const existingUser = await db.query.users.findFirst({ where: eq(users.id, userId) });
-
     if (existingUser) {
-      await db.update(users)
-        .set({
-          subscriptionId: subscription.id,
-          subscriptionStatus: subscription.status,
-          stripeCustomerId: subscription.customer as string,
-          subscriptionEndDate: trialEndDate,
-          stripePriceId: priceId,
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, userId));
+      await db.update(users).set(payload).where(eq(users.id, userId));
     } else {
       await db.insert(users).values({
+        ...payload,
         id: userId,
         email: subscription?.metadata?.email ?? '',
-        subscriptionId: subscription.id,
-        subscriptionStatus: subscription.status,
-        stripeCustomerId: subscription.customer as string,
-        subscriptionEndDate: trialEndDate,
-        stripePriceId: priceId,
         createdAt: new Date(),
-        updatedAt: new Date(),
       });
     }
 
-    await updateUserSubscription(subscription); // optional
+    await updateUserSubscription(subscription);
   }
 
   switch (event.type) {
