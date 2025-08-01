@@ -16,8 +16,8 @@ export async function POST(req: Request) {
   }
 
   const body = await req.text();
-  const rawHeaders = await req.headers(); // or headers() if it's a utility function
-  const sig = rawHeaders.get("stripe-signature");
+ const sig = req.headers.get("stripe-signature"); // ✅ works as expected
+
   let event: Stripe.Event;
 
   try {
