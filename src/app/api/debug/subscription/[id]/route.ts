@@ -1,5 +1,5 @@
 // src/app/api/debug/subscription/[id]/route.ts
-import { db } from "@/db";
+import { db } from "@/lib/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
