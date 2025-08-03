@@ -19,24 +19,32 @@ export async function POST() {
       where: eq(users.id, userId),
     });
 
-    if (!user) {
-      return new NextResponse(JSON.stringify({ error: "User not found" }), {
+    if (!user || !user.stripeCustomerId) {
+      return new NextResponse(JSON.stringify({ error: "User or Stripe customer not found" }), {
         status: 404,
       });
     }
 
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+      payment_method_types: ['card'],
+      mode: 'subscription',
       line_items: [
         {
-          price: process.env.STRIPE_LIVE_PRICE_ID!, // ✅ Using live price
+          price: process.env.STRIPE_PRICE_ID!, // ✅ use env var for flexibility
           quantity: 1,
         },
       ],
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/thank-you?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
-      metadata: { userId },
-      customer: user.stripeCustomerId ?? undefined,
+      metadata: {
+        userId: userId, // attaches to Checkout Session
+      },
+      subscription_data: {
+        metadata: {
+          userId: userId, // attaches to Subscription object
+        },
+      },
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/?success=true`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscribe`,
+      customer: user.stripeCustomerId, // ✅ pulled from DB
     });
 
     return new NextResponse(JSON.stringify({ url: session.url }));
