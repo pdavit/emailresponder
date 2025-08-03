@@ -45,12 +45,12 @@ console.log("🧪 Skipping session validation temporarily.");
         <p className="text-lg text-gray-700 mb-6">
          Your subscription is confirmed. You&apos;re all set to use EmailResponder 🚀
         </p>
-        <button
-          onClick={() => router.push("/app")}
-          className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
-        >
-          Go to App
-        </button>
+       <button
+  onClick={() => router.push("/app")}
+  className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
+>
+  Go to App
+</button>
       </div>
     </div>
   );

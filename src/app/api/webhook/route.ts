@@ -37,10 +37,10 @@ export async function POST(req: Request) {
       return;
     }
 
-    const trialEndDate =
-      typeof subscription.current_period_end === 'number'
-        ? new Date(subscription.current_period_end * 1000)
-        : null;
+  const currentPeriodEnd = (subscription as any).current_period_end;
+  const trialEndDate = typeof currentPeriodEnd === 'number'
+  ? new Date(currentPeriodEnd * 1000)
+  : null;
 
     const priceId = subscription.items.data[0]?.price.id ?? '';
 
