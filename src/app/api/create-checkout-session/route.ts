@@ -7,7 +7,8 @@ import { NextResponse } from "next/server";
 
 export async function POST() {
   try {
-    const { userId } = auth();
+  const { userId } = await auth();
+
 
     if (!userId) {
       return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
