@@ -7,9 +7,8 @@ import { NextResponse } from "next/server";
 
 export async function POST() {
   try {
-  const { userId } = await auth();
-console.log("🔎 Creating checkout for userId:", userId);
-
+    const { userId } = await auth();
+    console.log("🔎 Creating checkout for userId:", userId);
 
     if (!userId) {
       return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
@@ -27,27 +26,24 @@ console.log("🔎 Creating checkout for userId:", userId);
       });
     }
 
-   const session = await stripe.checkout.sessions.create({
-  payment_method_types: ['card'],
-  mode: 'subscription',
-  line_items: [
-    {
-      price: process.env.STRIPE_PRICE_ID!,
-      quantity: 1,
-    },
-  ],
-  metadata: {
-    userId,
-  },
-  subscription_data: {
-    metadata: {
-      userId,
-    },
-  },
-  success_url: `${process.env.NEXT_PUBLIC_APP_URL}/emailresponder?success=true`,
-  cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscribe`,
-  customer: user.stripeCustomerId,
-});
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price: process.env.STRIPE_PRICE_ID!,
+          quantity: 1,
+        },
+      ],
+      subscription_data: {
+        metadata: {
+          userId, // 👈 Needed for webhook
+        },
+      },
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/emailresponder?success=true`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscribe`,
+      customer: user.stripeCustomerId,
+    });
 
     return new NextResponse(JSON.stringify({ url: session.url }));
   } catch (err) {
