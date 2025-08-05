@@ -37,10 +37,10 @@ export async function POST(req: Request) {
       return;
     }
 
-  const currentPeriodEnd = (subscription as any).current_period_end;
-  const trialEndDate = typeof currentPeriodEnd === 'number'
-  ? new Date(currentPeriodEnd * 1000)
-  : null;
+    const currentPeriodEnd = (subscription as any).current_period_end;
+    const trialEndDate = typeof currentPeriodEnd === 'number'
+      ? new Date(currentPeriodEnd * 1000)
+      : null;
 
     const priceId = subscription.items.data[0]?.price.id ?? '';
 
@@ -92,8 +92,7 @@ export async function POST(req: Request) {
     }
 
     case 'customer.subscription.created':
-    case 'customer.subscription.updated':
-    case 'customer.subscription.deleted': {
+    case 'customer.subscription.updated': {
       const subscription = event.data.object as Stripe.Subscription;
       const userId = subscription.metadata?.userId;
 
@@ -107,6 +106,37 @@ export async function POST(req: Request) {
         console.log(`✅ Handled ${event.type}`);
       } catch (err) {
         console.error(`❌ Error in ${event.type} handler:`, err);
+      }
+
+      break;
+    }
+
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object as Stripe.Subscription;
+      const stripeCustomerId = subscription.customer as string;
+
+      // Look up user by stripeCustomerId
+      const user = await db.query.users.findFirst({
+        where: eq(users.stripeCustomerId, stripeCustomerId),
+      });
+
+      if (!user) {
+        console.error('❌ Could not find user by stripeCustomerId');
+        break;
+      }
+
+      try {
+        await db.update(users).set({
+          subscriptionId: null,
+          subscriptionStatus: 'canceled',
+          subscriptionEndDate: null,
+          stripePriceId: null,
+          updatedAt: new Date(),
+        }).where(eq(users.id, user.id));
+
+        console.log(`🗑️ Subscription deleted for user: ${user.id}`);
+      } catch (err) {
+        console.error('❌ Failed to handle subscription.deleted:', err);
       }
 
       break;
