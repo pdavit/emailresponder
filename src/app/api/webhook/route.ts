@@ -1,150 +1,215 @@
-import { stripe } from '@/lib/stripe';
-import { NextResponse } from 'next/server';
-import Stripe from 'stripe';
-import { db } from '@/lib/db';
-import { users } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { updateUserSubscription } from '@/lib/subscription';
+// src/app/api/webhook/route.ts
+import { NextResponse } from "next/server";
+import Stripe from "stripe";
+import { stripe } from "@/lib/stripe";
+import { db } from "@/lib/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { updateUserSubscription } from "@/lib/subscription";
+
+// For app routes this helps ensure we get a fresh handler
+export const dynamic = "force-dynamic";
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
+async function upsertUserFromSubscription(
+  subscription: Stripe.Subscription,
+  userId: string | null
+) {
+  // Try to pull userId from subscription metadata if not provided
+  const metaUserId = (subscription.metadata?.userId || "").trim();
+  const resolvedUserId = (userId || metaUserId || "").trim();
+
+  if (!resolvedUserId) {
+    console.error("❌ upsertUserFromSubscription: userId still missing");
+    return;
+  }
+
+  const currentPeriodEnd = (subscription as any).current_period_end;
+  const endDate =
+    typeof currentPeriodEnd === "number" ? new Date(currentPeriodEnd * 1000) : null;
+
+  const stripeCustomerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer?.id;
+
+  const priceId = subscription.items?.data?.[0]?.price?.id ?? "";
+
+  const payload = {
+    subscriptionId: subscription.id,
+    subscriptionStatus: subscription.status,
+    stripeCustomerId: stripeCustomerId ?? null,
+    subscriptionEndDate: endDate,
+    stripePriceId: priceId,
+    updatedAt: new Date(),
+  };
+
+  const existing = await db.query.users.findFirst({
+    where: eq(users.id, resolvedUserId),
+  });
+
+  if (existing) {
+    await db.update(users).set(payload).where(eq(users.id, resolvedUserId));
+  } else {
+    await db.insert(users).values({
+      id: resolvedUserId,
+      email: subscription.metadata?.email ?? "",
+      ...payload,
+      createdAt: new Date(),
+    });
+  }
+
+  // Keep your helper for any extra syncing you do
+  await updateUserSubscription(subscription);
+}
+
+async function findUserIdByCustomerId(stripeCustomerId: string | null | undefined) {
+  if (!stripeCustomerId) return null;
+  const u = await db.query.users.findFirst({
+    where: eq(users.stripeCustomerId, stripeCustomerId),
+  });
+  return u?.id ?? null;
+}
+
 export async function POST(req: Request) {
   if (!webhookSecret) {
-    console.error('❌ STRIPE_WEBHOOK_SECRET not defined!');
-    return new NextResponse('Webhook secret missing', { status: 500 });
+    console.error("❌ STRIPE_WEBHOOK_SECRET not defined");
+    return new NextResponse("Webhook secret missing", { status: 500 });
   }
 
-  const body = await req.text();
-  const signature = req.headers.get('stripe-signature');
+  const sig = req.headers.get("stripe-signature");
+  if (!sig) return new NextResponse("Missing Stripe signature", { status: 400 });
 
-  if (!signature) {
-    return new Response('Missing Stripe signature', { status: 400 });
-  }
-
+  const raw = await req.text();
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-    console.log('📦 Incoming event:', event.type);
-  } catch (err) {
-    console.error('❌ Webhook verification failed:', (err as Error).message);
-    return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
+    event = stripe.webhooks.constructEvent(raw, sig, webhookSecret);
+    console.log("📦 Incoming event:", event.type);
+  } catch (err: any) {
+    console.error("❌ Webhook verification failed:", err?.message || err);
+    return new NextResponse("Invalid signature", { status: 400 });
   }
 
-  async function handleSubscription(subscription: Stripe.Subscription, userId: string) {
-    if (!userId) {
-      console.error('❌ No user ID provided for subscription update');
-      return;
-    }
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
 
-    const currentPeriodEnd = (subscription as any).current_period_end;
-    const trialEndDate = typeof currentPeriodEnd === 'number'
-      ? new Date(currentPeriodEnd * 1000)
-      : null;
+        // Prefer metadata on the session first
+        let userId = session.metadata?.userId || null;
+        let subscriptionId = (session.subscription as string) || null;
 
-    const priceId = subscription.items.data[0]?.price.id ?? '';
+        // If missing, fetch an expanded session to grab everything
+        if (!userId || !subscriptionId) {
+          const full = await stripe.checkout.sessions.retrieve(session.id, {
+            expand: ["subscription"],
+          });
 
-    const payload = {
-      subscriptionId: subscription.id,
-      subscriptionStatus: subscription.status,
-      stripeCustomerId: String(subscription.customer),
-      subscriptionEndDate: trialEndDate,
-      stripePriceId: priceId,
-      updatedAt: new Date(),
-    };
+          userId =
+            full.metadata?.userId ||
+            (typeof full.subscription !== "string"
+              ? full.subscription?.metadata?.userId || null
+              : null) ||
+            null;
 
-    const existingUser = await db.query.users.findFirst({ where: eq(users.id, userId) });
+          subscriptionId =
+            (typeof full.subscription === "string"
+              ? full.subscription
+              : full.subscription?.id) || null;
+        }
 
-    if (existingUser) {
-      await db.update(users).set(payload).where(eq(users.id, userId));
-    } else {
-      await db.insert(users).values({
-        ...payload,
-        id: userId,
-        email: subscription.metadata?.email ?? '',
-        createdAt: new Date(),
-      });
-    }
+        // Last-ditch attempt: resolve userId by customer mapping in DB
+        if (!userId) {
+          const customerId =
+            (typeof session.customer === "string"
+              ? session.customer
+              : session.customer?.id) || null;
+          userId = await findUserIdByCustomerId(customerId);
+        }
 
-    await updateUserSubscription(subscription);
-  }
+        if (!userId || !subscriptionId) {
+          console.error(
+            "❌ Missing userId or subscriptionId after all backfills",
+            { userId, subscriptionId }
+          );
+          return new NextResponse("Missing metadata", { status: 400 });
+        }
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const userId = session.metadata?.userId;
-      const subscriptionId = session.subscription as string;
-
-      if (!userId || !subscriptionId) {
-        console.error('❌ Missing userId or subscriptionId in session metadata');
-        break;
-      }
-
-      try {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-        await handleSubscription(subscription, userId);
-        console.log('✅ Synced after checkout.session.completed');
-      } catch (err) {
-        console.error('❌ Failed to retrieve subscription:', err);
-      }
-
-      break;
-    }
-
-    case 'customer.subscription.created':
-    case 'customer.subscription.updated': {
-      const subscription = event.data.object as Stripe.Subscription;
-      const userId = subscription.metadata?.userId;
-
-      if (!userId) {
-        console.error(`❌ Missing userId in ${event.type}`);
+        await upsertUserFromSubscription(subscription, userId);
+        console.log("✅ Synced after checkout.session.completed");
         break;
       }
 
-      try {
-        await handleSubscription(subscription, userId);
+      case "customer.subscription.created":
+      case "customer.subscription.updated": {
+        const subscription = event.data.object as Stripe.Subscription;
+
+        // Try metadata, then DB lookup by customer
+        let userId = (subscription.metadata?.userId || "").trim();
+        if (!userId) {
+          const custId =
+            (typeof subscription.customer === "string"
+              ? subscription.customer
+              : subscription.customer?.id) || null;
+          userId = (await findUserIdByCustomerId(custId)) || "";
+        }
+
+        if (!userId) {
+          console.error(`❌ Missing userId for ${event.type}`);
+          break;
+        }
+
+        await upsertUserFromSubscription(subscription, userId);
         console.log(`✅ Handled ${event.type}`);
-      } catch (err) {
-        console.error(`❌ Error in ${event.type} handler:`, err);
-      }
-
-      break;
-    }
-
-    case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
-      const stripeCustomerId = subscription.customer as string;
-
-      // Look up user by stripeCustomerId
-      const user = await db.query.users.findFirst({
-        where: eq(users.stripeCustomerId, stripeCustomerId),
-      });
-
-      if (!user) {
-        console.error('❌ Could not find user by stripeCustomerId');
         break;
       }
 
-      try {
-        await db.update(users).set({
-          subscriptionId: null,
-          subscriptionStatus: 'canceled',
-          subscriptionEndDate: null,
-          stripePriceId: null,
-          updatedAt: new Date(),
-        }).where(eq(users.id, user.id));
+      case "customer.subscription.deleted": {
+        const subscription = event.data.object as Stripe.Subscription;
 
-        console.log(`🗑️ Subscription deleted for user: ${user.id}`);
-      } catch (err) {
-        console.error('❌ Failed to handle subscription.deleted:', err);
+        // Figure out who this belongs to
+        let userId = (subscription.metadata?.userId || "").trim();
+        if (!userId) {
+          const custId =
+            (typeof subscription.customer === "string"
+              ? subscription.customer
+              : subscription.customer?.id) || null;
+          userId = (await findUserIdByCustomerId(custId)) || "";
+        }
+
+        if (!userId) {
+          console.error("❌ Could not resolve user for subscription.deleted");
+          break;
+        }
+
+        await db
+          .update(users)
+          .set({
+            subscriptionId: null,
+            subscriptionStatus: "canceled",
+            subscriptionEndDate: null,
+            stripePriceId: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, userId));
+
+        console.log(`🗑️ Subscription deleted for user: ${userId}`);
+        break;
       }
 
-      break;
+      default:
+        // Totally fine—just log it so we know what else Stripe is sending us.
+        console.log(`📬 Unhandled event type: ${event.type}`);
+        break;
     }
 
-    default:
-      console.log(`📬 Unhandled Stripe event: ${event.type}`);
+    return new NextResponse("ok", { status: 200 });
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    // Respond 200 so Stripe doesn’t retry forever while we deploy a fix
+    return new NextResponse("handled with errors", { status: 200 });
   }
-
-  return new NextResponse('Received', { status: 200 });
 }
