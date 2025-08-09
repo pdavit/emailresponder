@@ -9,7 +9,9 @@ import { NextResponse } from "next/server";
 export async function POST() {
   try {
     const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     // Look up user
     let user = await db.query.users.findFirst({ where: eq(users.id, userId) });
@@ -17,17 +19,15 @@ export async function POST() {
     // If no stripe customer yet, create one and persist it
     if (!user?.stripeCustomerId) {
       const customer = await stripe.customers.create({
-        // fallbacks in case you don’t have email stored yet
         metadata: { userId },
       });
 
       if (user) {
-        await db.update(users)
+        await db
+          .update(users)
           .set({ stripeCustomerId: customer.id, updatedAt: new Date() })
           .where(eq(users.id, userId));
-        user = { ...user, stripeCustomerId: customer.id };
       } else {
-        // in case the row doesn't exist yet
         await db.insert(users).values({
           id: userId,
           email: "", // fill if you have it
@@ -35,25 +35,35 @@ export async function POST() {
           createdAt: new Date(),
           updatedAt: new Date(),
         });
-        user = { ...user, stripeCustomerId: customer.id } as typeof user;
       }
+
+      // ✅ re-fetch instead of spreading a maybe-undefined value
+      user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    }
+
+    if (!user?.stripeCustomerId) {
+      return NextResponse.json(
+        { error: "Failed to create Stripe customer" },
+        { status: 500 }
+      );
     }
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      payment_method_types: ["card"],
+      // automatic payment methods are enabled by default on modern accounts;
+      // omit payment_method_types unless you need to restrict them.
       line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
 
-      // ✅ ensure your webhook can link the sub back to the Clerk user
+      // Keep user linkage everywhere
       metadata: { userId },
       subscription_data: { metadata: { userId } },
 
       client_reference_id: userId,
-      customer: user!.stripeCustomerId!,
+      customer: user.stripeCustomerId,
 
-      // include session_id so you can validate client-side if you want
       success_url: `${process.env.NEXT_PUBLIC_APP_URL}/emailresponder?success=true&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/subscribe`,
+      allow_promotion_codes: true,
     });
 
     return NextResponse.json({ url: session.url });
