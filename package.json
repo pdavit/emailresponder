@@ -2,14 +2,15 @@
   "name": "emailresponder",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "drizzle:push": "drizzle-kit push",
-    "drizzle:generate": "drizzle-kit generate",
-    "dev": "next dev --turbo",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
+ "scripts": {
+  "db:generate": "dotenv -e .env.drizzle -- npx drizzle-kit generate",
+  "db:push": "dotenv -e .env.drizzle -- npx drizzle-kit push",
+  "db:studio": "dotenv -e .env.drizzle -- npx drizzle-kit studio",
+  "dev": "next dev --turbo",
+  "build": "next build",
+  "start": "next start",
+  "lint": "next lint"
+},
   "dependencies": {
     "@clerk/nextjs": "^4.29.5",
     "@heroicons/react": "^2.2.0",
@@ -26,9 +27,10 @@
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
     "autoprefixer": "^10.4.21",
+    "dotenv-cli": "^7.4.4",
     "drizzle-kit": "^0.31.4",
     "drizzle-orm": "^0.44.3",
     "eslint": "^9",

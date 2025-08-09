@@ -1,3 +1,4 @@
+// drizzle.config.ts
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
@@ -5,10 +6,10 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    host: "ep-spring-flower-aekt2i7p-pooler.c-2.us-east-2.aws.neon.tech",
-    database: "neondb",
-    user: "neondb_owner",
-    password: "npg_XyA4qd9slewa",
-    ssl: true
+    // drizzle-kit reads env when invoked (we'll inject .env.drizzle in scripts)
+    url: process.env.DATABASE_URL!,
   },
+  // Optional, but good for larger schemas:
+  // strict: true,
+  // verbose: true,
 });
