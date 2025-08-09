@@ -22,8 +22,11 @@ function getPriceId(s: StripeSub): string | null {
 }
 
 // Read snake_case timestamps safely (bypasses TS name-collision issues)
-function tsFromUnix(s: StripeSub, key: "current_period_end" | "trial_end" | "cancel_at" | "canceled_at") {
-  const v = (s as Record<string, unknown>)[key];
+function tsFromUnix(
+  s: StripeSub,
+  key: "current_period_end" | "trial_end" | "cancel_at" | "canceled_at"
+) {
+  const v = (s as any)[key];
   return typeof v === "number" ? new Date(v * 1000) : null;
 }
 
