@@ -9,12 +9,15 @@ type SubscriptionMetadata = {
   email?: string;
 };
 
-function getCustomerId(s: Stripe.Subscription): string | null {
+// Helpful alias to avoid name collisions with any other "Subscription" types
+type StripeSub = Stripe.Subscription;
+
+function getCustomerId(s: StripeSub): string | null {
   if (typeof s.customer === "string") return s.customer;
   return s.customer?.id ?? null;
 }
 
-function getPriceId(s: Stripe.Subscription): string | null {
+function getPriceId(s: StripeSub): string | null {
   return s.items?.data?.[0]?.price?.id ?? null;
 }
 
@@ -23,21 +26,24 @@ function isActiveStatus(
   includePastDue = true
 ): boolean {
   if (status === "active" || status === "trialing") return true;
-  if (includePastDue && status === "past_due") return true; // your grace policy
+  if (includePastDue && status === "past_due") return true;
   return false;
 }
 
 export async function updateUserSubscription(
-  subscription: Stripe.Subscription
+  subscription: Stripe.Subscription // keep the signature strongly typed
 ): Promise<void> {
   try {
-    const meta = (subscription.metadata ?? {}) as SubscriptionMetadata;
+    // Force the exact Stripe type (defensive against name shadowing)
+    const sub = subscription as StripeSub;
+
+    const meta = (sub.metadata ?? {}) as SubscriptionMetadata;
     const userIdFromMeta = meta.userId;
     const emailFromMeta = meta.email;
 
-    const stripeCustomerId = getCustomerId(subscription);
-    const subscriptionId = subscription.id;
-    const status = subscription.status;
+    const stripeCustomerId = getCustomerId(sub);
+    const subscriptionId = sub.id;
+    const status = sub.status;
 
     if (!stripeCustomerId) {
       console.error("❌ updateUserSubscription: Missing Stripe customer ID.", {
@@ -46,24 +52,18 @@ export async function updateUserSubscription(
       return;
     }
 
-    // Stripe epoch seconds → JS Date
-    const currentPeriodEnd = subscription.current_period_end
-      ? new Date(subscription.current_period_end * 1000)
+    // Stripe epoch seconds → JS Date (guard for undefined)
+    const currentPeriodEnd = sub.current_period_end
+      ? new Date(sub.current_period_end * 1000)
       : null;
 
-    const trialEnd = subscription.trial_end
-      ? new Date(subscription.trial_end * 1000)
+    const trialEnd = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
+    const cancelAt = sub.cancel_at ? new Date(sub.cancel_at * 1000) : null;
+    const canceledAt = sub.canceled_at
+      ? new Date(sub.canceled_at * 1000)
       : null;
 
-    const cancelAt = subscription.cancel_at
-      ? new Date(subscription.cancel_at * 1000)
-      : null;
-
-    const canceledAt = subscription.canceled_at
-      ? new Date(subscription.canceled_at * 1000)
-      : null;
-
-    const priceId = getPriceId(subscription);
+    const priceId = getPriceId(sub);
     const now = new Date();
 
     // Locate the row: prefer userId, then fallback by stripeCustomerId
@@ -82,15 +82,14 @@ export async function updateUserSubscription(
     let email = emailFromMeta ?? userRow?.email ?? "";
     if (!email && stripeCustomerId) {
       try {
-        // Light best-effort fetch; safe if you already expanded customer elsewhere
-        const cust = await (new Stripe(process.env.STRIPE_SECRET_KEY!, {
+        const client = new Stripe(process.env.STRIPE_SECRET_KEY!, {
           apiVersion: "2025-06-30.basil",
-        })).customers.retrieve(stripeCustomerId);
+        });
+        const cust = await client.customers.retrieve(stripeCustomerId);
         if (!("deleted" in cust) && typeof cust !== "string") {
           email = cust.email ?? "";
         }
       } catch (e) {
-        // Non-fatal
         console.warn("⚠️ Could not fetch customer email", {
           stripeCustomerId,
           err: (e as Error).message,
@@ -98,7 +97,6 @@ export async function updateUserSubscription(
       }
     }
 
-    // Build payload matching your schema
     const payload = {
       stripeCustomerId,
       subscriptionId,
@@ -107,7 +105,7 @@ export async function updateUserSubscription(
       stripePriceId: priceId,
       updatedAt: now,
 
-      // If your schema has these, uncomment:
+      // Uncomment these if your schema has them:
       // trialEnd,
       // cancelAt,
       // canceledAt,
@@ -167,7 +165,6 @@ export async function checkSubscriptionStatus(
   const status = (user?.subscriptionStatus ?? "") as Stripe.Subscription.Status;
   const ok = isActiveStatus(status, !!opts.includePastDueGrace);
 
-  // If you store cancelAt/canceledAt, you can add more rules here.
   const notExpired =
     !user?.subscriptionEndDate || user.subscriptionEndDate > new Date();
 
