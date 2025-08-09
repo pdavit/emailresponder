@@ -1,7 +1,10 @@
 // app/api/subscription-status/route.ts
-import { auth } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import { checkSubscriptionStatus } from "@/lib/subscription";
 import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const { userId } = auth();
