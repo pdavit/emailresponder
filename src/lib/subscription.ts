@@ -2,15 +2,18 @@
 import { db } from "@/lib/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import Stripe from "stripe";            // value import (we use it to fetch customer)
-import type StripeNS from "stripe";     // type-only import to avoid collisions
+
+import Stripe from "stripe";        // value import for API calls
+import type StripeNS from "stripe"; // types only
 
 type StripeSub = StripeNS.Subscription;
 
-type SubscriptionMetadata = {
-  userId?: string;
+type SubMeta = {
+  userId?: string; // Clerk user id we stash in metadata
   email?: string;
 };
+
+/* ---------- small helpers ---------- */
 
 function getCustomerId(s: StripeSub): string | null {
   if (typeof s.customer === "string") return s.customer;
@@ -21,50 +24,50 @@ function getPriceId(s: StripeSub): string | null {
   return s.items?.data?.[0]?.price?.id ?? null;
 }
 
-// Read snake_case timestamps safely (bypasses TS name-collision issues)
 function tsFromUnix(
   s: StripeSub,
   key: "current_period_end" | "trial_end" | "cancel_at" | "canceled_at"
-) {
+): Date | null {
   const v = (s as any)[key];
   return typeof v === "number" ? new Date(v * 1000) : null;
 }
 
-function isActiveStatus(
-  status: StripeNS.Subscription.Status,
-  includePastDue = true
+function isAccessAllowed(
+  status: StripeNS.Subscription.Status | undefined,
+  { includePastDueGrace = true }: { includePastDueGrace?: boolean } = {}
 ): boolean {
+  if (!status) return false;
   if (status === "active" || status === "trialing") return true;
-  if (includePastDue && status === "past_due") return true;
+  if (includePastDueGrace && status === "past_due") return true;
   return false;
 }
+
+/* ---------- main: write subscription to DB ---------- */
 
 export async function updateUserSubscription(subscription: StripeNS.Subscription): Promise<void> {
   try {
     const sub = subscription as StripeSub;
 
-    const meta = (sub.metadata ?? {}) as SubscriptionMetadata;
+    const meta: SubMeta = (sub.metadata ?? {}) as any;
     const userIdFromMeta = meta.userId;
-    const emailFromMeta = meta.email;
 
     const stripeCustomerId = getCustomerId(sub);
-    const subscriptionId = sub.id;
-    const status = sub.status;
-
     if (!stripeCustomerId) {
-      console.error("❌ updateUserSubscription: Missing Stripe customer ID.", { subscriptionId });
+      console.error("❌ Missing stripeCustomerId on subscription", { subId: sub.id });
       return;
     }
 
-    const currentPeriodEnd = tsFromUnix(sub, "current_period_end");
-    const trialEnd        = tsFromUnix(sub, "trial_end");
-    const cancelAt        = tsFromUnix(sub, "cancel_at");
-    const canceledAt      = tsFromUnix(sub, "canceled_at");
+    // Pull useful fields
+    const payload = {
+      stripeCustomerId,
+      subscriptionId: sub.id,
+      subscriptionStatus: sub.status,
+      subscriptionEndDate: tsFromUnix(sub, "current_period_end"),
+      stripePriceId: getPriceId(sub),
+      updatedAt: new Date(),
+    } as const;
 
-    const priceId = getPriceId(sub);
-    const now = new Date();
-
-    // Prefer userId, else look up by stripeCustomerId
+    // Find user row: prefer explicit userId, else by customer id
     let userRow =
       userIdFromMeta
         ? await db.query.users.findFirst({ where: eq(users.id, userIdFromMeta) })
@@ -76,9 +79,9 @@ export async function updateUserSubscription(subscription: StripeNS.Subscription
       });
     }
 
-    // Best-effort email
-    let email = emailFromMeta ?? userRow?.email ?? "";
-    if (!email && stripeCustomerId) {
+    // Best-effort email (keep what we have, else pull from Stripe)
+    let email = userRow?.email ?? meta.email ?? "";
+    if (!email) {
       try {
         const client = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2025-06-30.basil" });
         const cust = await client.customers.retrieve(stripeCustomerId);
@@ -93,30 +96,17 @@ export async function updateUserSubscription(subscription: StripeNS.Subscription
       }
     }
 
-    const payload = {
-      stripeCustomerId,
-      subscriptionId,
-      subscriptionStatus: status,
-      subscriptionEndDate: currentPeriodEnd,
-      stripePriceId: priceId,
-      updatedAt: now,
-      // Uncomment if you have these columns:
-      // trialEnd,
-      // cancelAt,
-      // canceledAt,
-      // isActive: isActiveStatus(status),
-    } as const;
-
     if (userRow) {
-      await db.update(users).set(payload).where(eq(users.id, userRow.id));
-      console.log("✅ Subscription updated", { userId: userRow.id, status, priceId });
+      await db.update(users).set({ ...payload, email }).where(eq(users.id, userRow.id));
+      console.log("✅ Subscription updated", { userId: userRow.id, status: sub.status });
       return;
     }
 
+    // No row found—create one only if we know the Clerk user id
     if (!userIdFromMeta) {
       console.warn(
-        "⚠️ updateUserSubscription: No matching user and no userId in metadata. Skipping insert.",
-        { stripeCustomerId, subscriptionId }
+        "⚠️ No matching user and no userId in metadata; skipping insert.",
+        { stripeCustomerId, subId: sub.id }
       );
       return;
     }
@@ -125,37 +115,41 @@ export async function updateUserSubscription(subscription: StripeNS.Subscription
       id: userIdFromMeta,
       email,
       ...payload,
-      createdAt: now,
+      createdAt: new Date(),
     });
 
-    console.log("✅ New user created with subscription", { userId: userIdFromMeta, status, priceId });
+    console.log("✅ New user created with subscription", {
+      userId: userIdFromMeta,
+      status: sub.status,
+    });
   } catch (err) {
     console.error("❌ updateUserSubscription error", { err: (err as Error).message });
   }
 }
 
-/**
- * Validates access based on subscription status + not expired.
- */
+/* ---------- main: read/check access ---------- */
+
 export async function checkSubscriptionStatus(
   userId: string,
   opts: { includePastDueGrace?: boolean } = {}
 ): Promise<boolean> {
-  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+  const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
 
-  const status = (user?.subscriptionStatus ?? "") as StripeNS.Subscription.Status;
-  const ok = isActiveStatus(status, !!opts.includePastDueGrace);
-  const notExpired = !user?.subscriptionEndDate || user.subscriptionEndDate > new Date();
+  const status = row?.subscriptionStatus as StripeNS.Subscription.Status | undefined;
+  const allowed = isAccessAllowed(status, { includePastDueGrace: !!opts.includePastDueGrace });
 
-  const isValid = Boolean(ok && notExpired);
+  // Still block if we have an end date in the past
+  const notExpired = !row?.subscriptionEndDate || row.subscriptionEndDate > new Date();
 
-  if (!isValid) {
+  const ok = Boolean(allowed && notExpired);
+
+  if (!ok) {
     console.warn("⚠️ Invalid access", {
       userId,
-      status,
-      end: user?.subscriptionEndDate?.toISOString() ?? "n/a",
+      status: status ?? "",
+      end: row?.subscriptionEndDate?.toISOString() ?? "n/a",
     });
   }
 
-  return isValid;
+  return ok;
 }
