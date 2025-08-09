@@ -7,27 +7,24 @@ import { updateUserSubscription } from "@/lib/subscription";
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
-async function findUserIdFromStripe(
-  event: Stripe.Event
-): Promise<string | null> {
-  // Try subscription first
-  if (event.data.object && (event.type.startsWith("customer.subscription"))) {
+// Try to resolve a Clerk userId for this event.
+async function resolveUserId(event: Stripe.Event): Promise<string | null> {
+  // 1) If event is about a subscription, check its metadata and customer
+  if (event.type.startsWith("customer.subscription")) {
     const sub = event.data.object as Stripe.Subscription;
     if (sub.metadata?.userId) return sub.metadata.userId;
 
-    // fall back to customer metadata if needed
     const cust = await stripe.customers.retrieve(sub.customer as string);
     if (!cust.deleted && typeof cust !== "string") {
       return (cust.metadata?.userId as string) ?? null;
     }
   }
 
-  // Try checkout.session
+  // 2) If event is about a checkout session, check metadata, then sub, then customer
   if (event.type === "checkout.session.completed") {
     const cs = event.data.object as Stripe.Checkout.Session;
     if (cs.metadata?.userId) return cs.metadata.userId;
 
-    // expand subscription to look there
     if (cs.subscription) {
       const sub = await stripe.subscriptions.retrieve(cs.subscription as string);
       if (sub.metadata?.userId) return sub.metadata.userId;
@@ -42,13 +39,24 @@ async function findUserIdFromStripe(
   return null;
 }
 
-export async function POST(req: Request) {
-  const raw = await req.text();
-  const sig = (await headers()).get("stripe-signature")!;
-  let event: Stripe.Event;
+// Make sure the subscription object has metadata.userId before we pass it along.
+async function ensureUserIdOnSubscription(
+  sub: Stripe.Subscription,
+  fallbackUserId: string | null
+): Promise<Stripe.Subscription> {
+  if (!sub.metadata?.userId && fallbackUserId) {
+    sub.metadata = { ...(sub.metadata ?? {}), userId: fallbackUserId };
+  }
+  return sub;
+}
 
+export async function POST(req: Request) {
+  const rawBody = await req.text();
+  const sig = (await headers()).get("stripe-signature")!;
+
+  let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(raw, sig, webhookSecret);
+    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (err) {
     return new NextResponse(`Webhook Error: ${(err as Error).message}`, { status: 400 });
   }
@@ -57,67 +65,43 @@ export async function POST(req: Request) {
     switch (event.type) {
       case "checkout.session.completed": {
         const cs = event.data.object as Stripe.Checkout.Session;
-        const userId = (cs.metadata?.userId as string) ?? (await findUserIdFromStripe(event));
+        const userId =
+          (cs.metadata?.userId as string | undefined) ?? (await resolveUserId(event));
         if (!userId) break;
 
         if (cs.subscription) {
           const sub = await stripe.subscriptions.retrieve(cs.subscription as string);
-          await updateUserSubscription({
-            userId,
-            stripeCustomerId: cs.customer as string,
-            stripeSubscriptionId: sub.id,
-            priceId: (sub.items.data[0]?.price?.id) ?? null,
-            status: sub.status,
-            currentPeriodEnd: sub.current_period_end,
-            trialEnd: sub.trial_end,
-            cancelAt: sub.cancel_at,
-            canceledAt: sub.canceled_at,
-          });
+          const subWithUser = await ensureUserIdOnSubscription(sub, userId);
+          await updateUserSubscription(subWithUser);
         }
         break;
       }
 
       case "customer.subscription.created":
-      case "customer.subscription.updated": {
-        const sub = event.data.object as Stripe.Subscription;
-        const userId = sub.metadata?.userId ?? (await findUserIdFromStripe(event));
-        if (!userId) break;
-
-        await updateUserSubscription({
-          userId,
-          stripeCustomerId: sub.customer as string,
-          stripeSubscriptionId: sub.id,
-          priceId: (sub.items.data[0]?.price?.id) ?? null,
-          status: sub.status,
-          currentPeriodEnd: sub.current_period_end,
-          trialEnd: sub.trial_end,
-          cancelAt: sub.cancel_at,
-          canceledAt: sub.canceled_at,
-        });
-        break;
-      }
-
+      case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
-        const userId = sub.metadata?.userId ?? (await findUserIdFromStripe(event));
-        if (!userId) break;
-
-        await updateUserSubscription({
-          userId,
-          stripeCustomerId: sub.customer as string,
-          stripeSubscriptionId: sub.id,
-          priceId: (sub.items.data[0]?.price?.id) ?? null,
-          status: "canceled",
-          currentPeriodEnd: sub.current_period_end,
-          trialEnd: sub.trial_end,
-          cancelAt: sub.cancel_at,
-          canceledAt: sub.canceled_at ?? Math.floor(Date.now() / 1000),
-        });
+        const userId =
+          (sub.metadata?.userId as string | undefined) ?? (await resolveUserId(event));
+        const subWithUser = await ensureUserIdOnSubscription(sub, userId);
+        await updateUserSubscription(subWithUser);
         break;
       }
 
+      // (Optional) If you want to react on invoices (e.g., mark active on payment):
+      // case "invoice.payment_succeeded": {
+      //   const inv = event.data.object as Stripe.Invoice;
+      //   if (inv.subscription) {
+      //     const userId = await resolveUserId(event);
+      //     const sub = await stripe.subscriptions.retrieve(inv.subscription as string);
+      //     const subWithUser = await ensureUserIdOnSubscription(sub, userId);
+      //     await updateUserSubscription(subWithUser);
+      //   }
+      //   break;
+      // }
+
       default:
-        // ignore
+        // Ignore other events
         break;
     }
 
