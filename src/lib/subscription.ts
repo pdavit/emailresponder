@@ -1,27 +1,24 @@
 // src/lib/subscription.ts
 import { db } from "@/lib/db";
 import { users } from "@/db/schema";
-import { eq } from "drizzle-orm";
-
-import Stripe from "stripe";        // value import for API calls
-import type StripeNS from "stripe"; // types only
+import { and, eq } from "drizzle-orm";
+import Stripe from "stripe";
+import type StripeNS from "stripe";
 
 type StripeSub = StripeNS.Subscription;
 
-type SubMeta = {
-  userId?: string; // Clerk user id we stash in metadata
-  email?: string;
-};
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2025-06-30.basil",
+});
 
-/* ---------- small helpers ---------- */
-
-function getCustomerId(s: StripeSub): string | null {
-  if (typeof s.customer === "string") return s.customer;
-  return s.customer?.id ?? null;
-}
-
-function getPriceId(s: StripeSub): string | null {
-  return s.items?.data?.[0]?.price?.id ?? null;
+function isActiveStatus(
+  status: StripeNS.Subscription.Status | undefined | null,
+  includePastDue = true
+): boolean {
+  if (!status) return false;
+  if (status === "active" || status === "trialing") return true;
+  if (includePastDue && status === "past_due") return true;
+  return false;
 }
 
 function tsFromUnix(
@@ -32,124 +29,172 @@ function tsFromUnix(
   return typeof v === "number" ? new Date(v * 1000) : null;
 }
 
-function isAccessAllowed(
-  status: StripeNS.Subscription.Status | undefined,
-  { includePastDueGrace = true }: { includePastDueGrace?: boolean } = {}
-): boolean {
-  if (!status) return false;
-  if (status === "active" || status === "trialing") return true;
-  if (includePastDueGrace && status === "past_due") return true;
-  return false;
+function getPriceId(s: StripeSub): string | null {
+  return s.items?.data?.[0]?.price?.id ?? null;
 }
 
-/* ---------- main: write subscription to DB ---------- */
+/**
+ * Pull latest subscription for a customer from Stripe and upsert into `users`.
+ * Returns normalized "isActive" decision.
+ */
+async function refreshFromStripeByCustomerId(stripeCustomerId: string) {
+  // Most recent sub first
+  const list = await stripe.subscriptions.list({
+    customer: stripeCustomerId,
+    status: "all",
+    limit: 1,
+    expand: ["data.items.data.price.product"],
+  });
 
-export async function updateUserSubscription(subscription: StripeNS.Subscription): Promise<void> {
+  const sub = list.data[0];
+  if (!sub) {
+    // No sub at Stripe – mark as none
+    return {
+      subscriptionId: null as string | null,
+      subscriptionStatus: "" as "" | StripeNS.Subscription.Status,
+      subscriptionEndDate: null as Date | null,
+      stripePriceId: null as string | null,
+      isActive: false,
+    };
+  }
+
+  const subscriptionId = sub.id;
+  const subscriptionStatus = sub.status;
+  const subscriptionEndDate = tsFromUnix(sub, "current_period_end");
+  const stripePriceId = getPriceId(sub);
+
+  return {
+    subscriptionId,
+    subscriptionStatus,
+    subscriptionEndDate,
+    stripePriceId,
+    isActive: isActiveStatus(subscriptionStatus),
+  };
+}
+
+/**
+ * Upsert values on the user row.
+ */
+async function upsertUserSubscription(
+  userId: string,
+  data: {
+    subscriptionId: string | null;
+    subscriptionStatus: "" | StripeNS.Subscription.Status;
+    subscriptionEndDate: Date | null;
+    stripePriceId: string | null;
+  }
+) {
+  const now = new Date();
+  await db
+    .update(users)
+    .set({
+      subscriptionId: data.subscriptionId ?? null,
+      subscriptionStatus: data.subscriptionStatus ?? "",
+      subscriptionEndDate: data.subscriptionEndDate ?? null,
+      stripePriceId: data.stripePriceId ?? null,
+      updatedAt: now,
+    })
+    .where(eq(users.id, userId));
+}
+
+/**
+ * Public: called by middleware/routes to decide access.
+ * - If DB already has a status, use it (and allow when active/trialing/past_due*).
+ * - If missing/stale, pull from Stripe, save, and then decide.
+ */
+export async function checkSubscriptionStatus(
+  userId: string,
+  opts: { includePastDueGrace?: boolean } = {}
+): Promise<boolean> {
+  const includePastDueGrace = !!opts.includePastDueGrace;
+
+  // 1) Read current cache
+  const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
+
+  // If we have a status and it looks fine, decide immediately.
+  const cachedStatus = (row?.subscriptionStatus ?? "") as
+    | ""
+    | StripeNS.Subscription.Status;
+
+  const cachedEnd = row?.subscriptionEndDate ?? null;
+  const cachedOk =
+    isActiveStatus(cachedStatus, includePastDueGrace) &&
+    (!cachedEnd || cachedEnd > new Date());
+
+  if (cachedStatus && cachedOk) return true;
+
+  // 2) Otherwise, try to refresh from Stripe (requires a stored customer id)
+  const stripeCustomerId = row?.stripeCustomerId ?? null;
+  if (!stripeCustomerId) {
+    console.warn("⚠️ No stripeCustomerId on user; denying access", { userId });
+    return false;
+  }
+
+  try {
+    const latest = await refreshFromStripeByCustomerId(stripeCustomerId);
+    await upsertUserSubscription(userId, latest);
+
+    const ok =
+      isActiveStatus(latest.subscriptionStatus, includePastDueGrace) &&
+      (!latest.subscriptionEndDate || latest.subscriptionEndDate > new Date());
+
+    if (!ok) {
+      console.warn("⚠️ Invalid access after refresh", {
+        userId,
+        status: latest.subscriptionStatus ?? "",
+        end: latest.subscriptionEndDate?.toISOString() ?? "n/a",
+      });
+    }
+    return ok;
+  } catch (err) {
+    console.error("❌ Stripe refresh failed", {
+      userId,
+      err: (err as Error).message,
+    });
+    return false;
+  }
+}
+
+/**
+ * Webhook entry-point (kept for when webhooks arrive).
+ * You can keep your existing implementation; this one normalizes and saves.
+ */
+export async function updateUserSubscription(subscription: StripeNS.Subscription) {
   try {
     const sub = subscription as StripeSub;
+    const stripeCustomerId =
+      typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
 
-    const meta: SubMeta = (sub.metadata ?? {}) as any;
-    const userIdFromMeta = meta.userId;
-
-    const stripeCustomerId = getCustomerId(sub);
     if (!stripeCustomerId) {
-      console.error("❌ Missing stripeCustomerId on subscription", { subId: sub.id });
+      console.error("❌ Missing stripeCustomerId on webhook sub", { id: sub.id });
       return;
     }
 
-    // Pull useful fields
+    // Find user row by stripeCustomerId
+    const row = await db.query.users.findFirst({
+      where: eq(users.stripeCustomerId, stripeCustomerId),
+    });
+    if (!row) {
+      console.warn("⚠️ Webhook for unknown customer; skipping", {
+        stripeCustomerId,
+        subId: sub.id,
+      });
+      return;
+    }
+
     const payload = {
-      stripeCustomerId,
       subscriptionId: sub.id,
       subscriptionStatus: sub.status,
       subscriptionEndDate: tsFromUnix(sub, "current_period_end"),
       stripePriceId: getPriceId(sub),
-      updatedAt: new Date(),
-    } as const;
+    };
 
-    // Find user row: prefer explicit userId, else by customer id
-    let userRow =
-      userIdFromMeta
-        ? await db.query.users.findFirst({ where: eq(users.id, userIdFromMeta) })
-        : null;
-
-    if (!userRow) {
-      userRow = await db.query.users.findFirst({
-        where: eq(users.stripeCustomerId, stripeCustomerId),
-      });
-    }
-
-    // Best-effort email (keep what we have, else pull from Stripe)
-    let email = userRow?.email ?? meta.email ?? "";
-    if (!email) {
-      try {
-        const client = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2025-06-30.basil" });
-        const cust = await client.customers.retrieve(stripeCustomerId);
-        if (!("deleted" in cust) && typeof cust !== "string") {
-          email = cust.email ?? "";
-        }
-      } catch (e) {
-        console.warn("⚠️ Could not fetch customer email", {
-          stripeCustomerId,
-          err: (e as Error).message,
-        });
-      }
-    }
-
-    if (userRow) {
-      await db.update(users).set({ ...payload, email }).where(eq(users.id, userRow.id));
-      console.log("✅ Subscription updated", { userId: userRow.id, status: sub.status });
-      return;
-    }
-
-    // No row found—create one only if we know the Clerk user id
-    if (!userIdFromMeta) {
-      console.warn(
-        "⚠️ No matching user and no userId in metadata; skipping insert.",
-        { stripeCustomerId, subId: sub.id }
-      );
-      return;
-    }
-
-    await db.insert(users).values({
-      id: userIdFromMeta,
-      email,
-      ...payload,
-      createdAt: new Date(),
-    });
-
-    console.log("✅ New user created with subscription", {
-      userId: userIdFromMeta,
+    await upsertUserSubscription(row.id, payload);
+    console.log("✅ Subscription updated from webhook", {
+      userId: row.id,
       status: sub.status,
     });
   } catch (err) {
     console.error("❌ updateUserSubscription error", { err: (err as Error).message });
   }
-}
-
-/* ---------- main: read/check access ---------- */
-
-export async function checkSubscriptionStatus(
-  userId: string,
-  opts: { includePastDueGrace?: boolean } = {}
-): Promise<boolean> {
-  const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
-
-  const status = row?.subscriptionStatus as StripeNS.Subscription.Status | undefined;
-  const allowed = isAccessAllowed(status, { includePastDueGrace: !!opts.includePastDueGrace });
-
-  // Still block if we have an end date in the past
-  const notExpired = !row?.subscriptionEndDate || row.subscriptionEndDate > new Date();
-
-  const ok = Boolean(allowed && notExpired);
-
-  if (!ok) {
-    console.warn("⚠️ Invalid access", {
-      userId,
-      status: status ?? "",
-      end: row?.subscriptionEndDate?.toISOString() ?? "n/a",
-    });
-  }
-
-  return ok;
 }
