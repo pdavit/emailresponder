@@ -1,7 +1,8 @@
 // src/lib/subscription.ts
 import { db } from "@/lib/db";
 import { users } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+
 import Stripe from "stripe";
 import type StripeNS from "stripe";
 
@@ -11,14 +12,31 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-06-30.basil",
 });
 
+/* ---------------------------- helpers ---------------------------- */
+
 function isActiveStatus(
-  status: StripeNS.Subscription.Status | undefined | null,
+  status?: StripeNS.Subscription.Status | null,
   includePastDue = true
 ): boolean {
   if (!status) return false;
   if (status === "active" || status === "trialing") return true;
   if (includePastDue && status === "past_due") return true;
   return false;
+}
+
+function toStripeStatus(s?: string | null): StripeNS.Subscription.Status | null {
+  if (!s) return null;
+  const allowed: ReadonlyArray<StripeNS.Subscription.Status> = [
+    "trialing",
+    "active",
+    "past_due",
+    "canceled",
+    "incomplete",
+    "incomplete_expired",
+    "paused",
+    "unpaid",
+  ] as const;
+  return (allowed as readonly string[]).includes(s) ? (s as StripeNS.Subscription.Status) : null;
 }
 
 function tsFromUnix(
@@ -33,12 +51,9 @@ function getPriceId(s: StripeSub): string | null {
   return s.items?.data?.[0]?.price?.id ?? null;
 }
 
-/**
- * Pull latest subscription for a customer from Stripe and upsert into `users`.
- * Returns normalized "isActive" decision.
- */
+/* -------- pull latest from Stripe and upsert into users -------- */
+
 async function refreshFromStripeByCustomerId(stripeCustomerId: string) {
-  // Most recent sub first
   const list = await stripe.subscriptions.list({
     customer: stripeCustomerId,
     status: "all",
@@ -48,38 +63,27 @@ async function refreshFromStripeByCustomerId(stripeCustomerId: string) {
 
   const sub = list.data[0];
   if (!sub) {
-    // No sub at Stripe – mark as none
     return {
       subscriptionId: null as string | null,
-      subscriptionStatus: "" as "" | StripeNS.Subscription.Status,
+      subscriptionStatus: null as StripeNS.Subscription.Status | null,
       subscriptionEndDate: null as Date | null,
       stripePriceId: null as string | null,
-      isActive: false,
     };
   }
 
-  const subscriptionId = sub.id;
-  const subscriptionStatus = sub.status;
-  const subscriptionEndDate = tsFromUnix(sub, "current_period_end");
-  const stripePriceId = getPriceId(sub);
-
   return {
-    subscriptionId,
-    subscriptionStatus,
-    subscriptionEndDate,
-    stripePriceId,
-    isActive: isActiveStatus(subscriptionStatus),
+    subscriptionId: sub.id,
+    subscriptionStatus: sub.status,
+    subscriptionEndDate: tsFromUnix(sub, "current_period_end"),
+    stripePriceId: getPriceId(sub),
   };
 }
 
-/**
- * Upsert values on the user row.
- */
 async function upsertUserSubscription(
   userId: string,
   data: {
     subscriptionId: string | null;
-    subscriptionStatus: "" | StripeNS.Subscription.Status;
+    subscriptionStatus: StripeNS.Subscription.Status | null;
     subscriptionEndDate: Date | null;
     stripePriceId: string | null;
   }
@@ -89,7 +93,7 @@ async function upsertUserSubscription(
     .update(users)
     .set({
       subscriptionId: data.subscriptionId ?? null,
-      subscriptionStatus: data.subscriptionStatus ?? "",
+      subscriptionStatus: data.subscriptionStatus ?? null,
       subscriptionEndDate: data.subscriptionEndDate ?? null,
       stripePriceId: data.stripePriceId ?? null,
       updatedAt: now,
@@ -97,25 +101,18 @@ async function upsertUserSubscription(
     .where(eq(users.id, userId));
 }
 
-/**
- * Public: called by middleware/routes to decide access.
- * - If DB already has a status, use it (and allow when active/trialing/past_due*).
- * - If missing/stale, pull from Stripe, save, and then decide.
- */
+/* --------------------- public: check access --------------------- */
+
 export async function checkSubscriptionStatus(
   userId: string,
   opts: { includePastDueGrace?: boolean } = {}
 ): Promise<boolean> {
   const includePastDueGrace = !!opts.includePastDueGrace;
 
-  // 1) Read current cache
+  // 1) Read cache
   const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
 
-  // If we have a status and it looks fine, decide immediately.
-  const cachedStatus = (row?.subscriptionStatus ?? "") as
-    | ""
-    | StripeNS.Subscription.Status;
-
+  const cachedStatus = toStripeStatus(row?.subscriptionStatus);
   const cachedEnd = row?.subscriptionEndDate ?? null;
   const cachedOk =
     isActiveStatus(cachedStatus, includePastDueGrace) &&
@@ -123,7 +120,7 @@ export async function checkSubscriptionStatus(
 
   if (cachedStatus && cachedOk) return true;
 
-  // 2) Otherwise, try to refresh from Stripe (requires a stored customer id)
+  // 2) Refresh from Stripe if we have a customer id
   const stripeCustomerId = row?.stripeCustomerId ?? null;
   if (!stripeCustomerId) {
     console.warn("⚠️ No stripeCustomerId on user; denying access", { userId });
@@ -145,6 +142,7 @@ export async function checkSubscriptionStatus(
         end: latest.subscriptionEndDate?.toISOString() ?? "n/a",
       });
     }
+
     return ok;
   } catch (err) {
     console.error("❌ Stripe refresh failed", {
@@ -155,10 +153,8 @@ export async function checkSubscriptionStatus(
   }
 }
 
-/**
- * Webhook entry-point (kept for when webhooks arrive).
- * You can keep your existing implementation; this one normalizes and saves.
- */
+/* ---------------- webhook updater (kept warm) ---------------- */
+
 export async function updateUserSubscription(subscription: StripeNS.Subscription) {
   try {
     const sub = subscription as StripeSub;
@@ -170,7 +166,7 @@ export async function updateUserSubscription(subscription: StripeNS.Subscription
       return;
     }
 
-    // Find user row by stripeCustomerId
+    // Find user by customer id (we also create rows at checkout time)
     const row = await db.query.users.findFirst({
       where: eq(users.stripeCustomerId, stripeCustomerId),
     });
@@ -182,14 +178,13 @@ export async function updateUserSubscription(subscription: StripeNS.Subscription
       return;
     }
 
-    const payload = {
+    await upsertUserSubscription(row.id, {
       subscriptionId: sub.id,
       subscriptionStatus: sub.status,
       subscriptionEndDate: tsFromUnix(sub, "current_period_end"),
       stripePriceId: getPriceId(sub),
-    };
+    });
 
-    await upsertUserSubscription(row.id, payload);
     console.log("✅ Subscription updated from webhook", {
       userId: row.id,
       status: sub.status,
