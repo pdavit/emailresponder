@@ -1,30 +1,59 @@
+// src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import stripe from "@/lib/stripe";
 
-export const runtime = "nodejs";        // raw body support
-export const dynamic = "force-dynamic"; // avoid caching
+export const runtime = "nodejs";        // Stripe SDK needs Node
+export const dynamic = "force-dynamic"; // no caching for webhooks
 
-// TODO: replace with real DB calls
+// ---- TODO: replace with real DB calls ----
 async function linkCustomerToUser(_opts: { firebaseUid: string; customerId: string }) {}
 async function setSubscriptionStatus(_opts: {
-  firebaseUid: string; subscriptionId: string; priceId: string | null;
-  status: string; currentPeriodEnd: number | null;
+  firebaseUid: string;
+  subscriptionId: string;
+  priceId: string | null;
+  status: string;
+  currentPeriodEnd: number | null;
 }) {}
+// ------------------------------------------
 
-// Optional quick GET for liveness
-export async function GET() { return NextResponse.json({ ok: true }); }
+// Liveness probe (Stripe sometimes pings)
+export async function GET() {
+  return NextResponse.json({ ok: true });
+}
+
+// Helper: normalize period end across Stripe type versions
+function getPeriodEnd(sub: any): number | null {
+  return sub?.current_period_end ?? sub?.currentPeriodEnd ?? null;
+}
+
+// Helper: one place to persist subscription state
+async function persistFromSubscription(firebaseUid: string, sub: Stripe.Subscription) {
+  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+  await setSubscriptionStatus({
+    firebaseUid,
+    subscriptionId: sub.id,
+    priceId,
+    status: sub.status,
+    currentPeriodEnd: getPeriodEnd(sub),
+  });
+}
 
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature") ?? "";
-  const secret = process.env.STRIPE_WEBHOOK_SECRET!;
-  let event: Stripe.Event;
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error("Missing STRIPE_WEBHOOK_SECRET");
+    return new NextResponse("Misconfigured webhook", { status: 500 });
+  }
 
+  let event: Stripe.Event;
   try {
-    const raw = await req.text(); // IMPORTANT: raw body
-    event = stripe.webhooks.constructEvent(raw, sig, secret);
+    // IMPORTANT: use raw body for signature verification
+    const rawBody = await req.text();
+    event = stripe.webhooks.constructEvent(rawBody, sig, secret);
   } catch (err: any) {
-    console.error("Bad signature:", err.message);
+    console.error("Webhook signature verification failed:", err?.message);
     return new NextResponse("Invalid signature", { status: 400 });
   }
 
@@ -32,63 +61,70 @@ export async function POST(req: NextRequest) {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
-        const firebaseUid = (session.client_reference_id as string) ?? "";
+
+        // Prefer metadata, fall back to client_reference_id
+        const firebaseUid =
+          (session.metadata as any)?.firebaseUid ||
+          (session.client_reference_id as string) ||
+          "";
+
         const customerId = (session.customer as string) ?? "";
         const subscriptionId = (session.subscription as string) ?? "";
 
         if (firebaseUid && customerId) {
           await linkCustomerToUser({ firebaseUid, customerId });
         }
+
         if (firebaseUid && subscriptionId) {
-          const sub = await stripe.subscriptions.retrieve(subscriptionId) as Stripe.Subscription;
-          const priceId = sub.items.data[0]?.price?.id ?? null;
-          await setSubscriptionStatus({
-            firebaseUid, subscriptionId, priceId,
-            status: sub.status, currentPeriodEnd: (sub as any).current_period_end ?? null,
-          });
+          const sub = (await stripe.subscriptions.retrieve(
+            subscriptionId
+          )) as Stripe.Subscription;
+          await persistFromSubscription(firebaseUid, sub);
         }
         break;
       }
+
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
         const customerId = sub.customer as string;
+
+        // Retrieve customer to get stored firebaseUid
         const customer = await stripe.customers.retrieve(customerId);
         const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
-        const priceId = sub.items.data[0]?.price?.id ?? null;
         if (firebaseUid) {
-          await setSubscriptionStatus({
-            firebaseUid, subscriptionId: sub.id, priceId,
-            status: sub.status, currentPeriodEnd: (sub as any).current_period_end ?? null,
-          });
+          await persistFromSubscription(firebaseUid, sub);
         }
         break;
       }
+
       case "invoice.payment_failed": {
-        const inv = event.data.object as Stripe.Invoice;
-        const subId = (inv as any).subscription as string;
+        const invoice = event.data.object as Stripe.Invoice;
+        const subId = (invoice.subscription as string) || "";
         if (subId) {
-          const sub = await stripe.subscriptions.retrieve(subId) as Stripe.Subscription;
+          const sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
           const customer = await stripe.customers.retrieve(sub.customer as string);
           const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
-          const priceId = sub.items.data[0]?.price?.id ?? null;
           if (firebaseUid) {
-            await setSubscriptionStatus({
-              firebaseUid, subscriptionId: sub.id, priceId,
-              status: sub.status, currentPeriodEnd: (sub as any).current_period_end ?? null,
-            });
+            await persistFromSubscription(firebaseUid, sub);
           }
         }
         break;
       }
+
+      // Optional: handle async payment outcomes
+      case "checkout.session.async_payment_succeeded":
+      case "checkout.session.async_payment_failed":
       default:
-        // ignore others for now
+        // No-op for other events
         break;
     }
+
+    // 200 tells Stripe the event was received successfully
     return NextResponse.json({ received: true });
-  } catch (e) {
-    console.error("Webhook handler error:", e);
+  } catch (err) {
+    console.error("Webhook handler error:", err);
     return new NextResponse("Webhook handler failed", { status: 500 });
   }
 }
