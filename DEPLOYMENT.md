@@ -5,7 +5,7 @@ This guide will help you deploy the EmailResponder application to Vercel with al
 ## 🚀 **Prerequisites**
 
 1. **Vercel Account** - Sign up at [vercel.com](https://vercel.com)
-2. **Clerk Account** - Sign up at [clerk.com](https://clerk.com)
+2. **Firebase Account** - Sign up at [console.firebase.google.com](https://console.firebase.google.com)
 3. **OpenAI Account** - Sign up at [openai.com](https://openai.com)
 4. **PostgreSQL Database** - Use Vercel Postgres or any PostgreSQL provider
 
@@ -23,13 +23,14 @@ DATABASE_URL="postgresql://username:password@host:port/database"
 OPENAI_API_KEY="sk-your-openai-api-key"
 ```
 
-### **3. Clerk Authentication**
+### **3. Firebase Authentication**
 ```env
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_your_clerk_publishable_key"
-CLERK_SECRET_KEY="sk_test_your_clerk_secret_key"
-NEXT_PUBLIC_CLERK_SIGN_IN_URL="/sign-in"
-NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL="/emailresponder"
-NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL="/emailresponder"
+NEXT_PUBLIC_FIREBASE_API_KEY="your_firebase_api_key_here"
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="your_project_id.firebaseapp.com"
+NEXT_PUBLIC_FIREBASE_PROJECT_ID="your_project_id"
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="your_project_id.appspot.com"
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="123456789"
+NEXT_PUBLIC_FIREBASE_APP_ID="1:123456789:web:abcdef123456"
 ```
 
 ### **4. App Configuration**
@@ -54,8 +55,8 @@ NEXT_PUBLIC_APP_URL="https://your-app.vercel.app"
    npm run db:generate
    ```
 
-### **Step 2: Clerk Setup**
-1. Create a Clerk application
+### **Step 2: Firebase Setup**
+1. Create a Firebase project
 2. Configure your application settings
 3. Set up the authentication flow
 4. Add your domain to allowed origins
@@ -115,8 +116,8 @@ npm run db:push
 - Ensure variable names match exactly with your `.env` file
 - Verify no typos in variable names
 
-#### **3. Clerk Authentication Issues**
-- Verify Clerk keys are correct
+#### **3. Firebase Authentication Issues**
+- Verify Firebase configuration is correct
 - Check domain configuration
 - Ensure redirect URLs are properly set
 
@@ -132,7 +133,7 @@ npm run db:push
 - Check for errors in function logs
 - Monitor API usage
 
-### **Clerk Dashboard**
+### **Firebase Console**
 - Monitor user sign-ups
 - Check authentication logs
 - Review security events
@@ -163,7 +164,7 @@ If you encounter issues:
 
 - The application uses Next.js 15 with App Router
 - Drizzle ORM is configured for database operations
-- All API routes are protected with Clerk authentication
+- All API routes are protected with Firebase authentication
 - The demo page is read-only and doesn't require authentication
 - All environment variables should be stored in a `.env` file locally and configured in Vercel dashboard for production
 - **Note**: Payment functionality has been temporarily removed and will be re-integrated with Stripe in a future update 

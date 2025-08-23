@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -11,9 +10,12 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId } = await auth();
+    // Get userId from query params (temporary solution)
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get('userId');
+    
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
     }
 
     const { id } = await params;

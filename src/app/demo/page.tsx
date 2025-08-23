@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckIcon, ClipboardIcon, ArrowPathIcon, LockClosedIcon } from '@heroicons/react/24/outline';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
 
 // Dummy data for the demo
 const demoData = {
@@ -66,15 +67,25 @@ Project Manager`
 };
 
 export default function DemoPage() {
-  const { isSignedIn } = useAuth();
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
+
+  // Check authentication status
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setIsSignedIn(!!user);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
 
   // Redirect signed-in users to the full app
   useEffect(() => {
-    if (isSignedIn) {
+    if (isSignedIn && !loading) {
       router.push('/emailresponder');
     }
-  }, [isSignedIn, router]);
+  }, [isSignedIn, loading, router]);
 
   // Disable copy/paste and selection
   useEffect(() => {
@@ -110,7 +121,7 @@ export default function DemoPage() {
   }, []);
 
   // Show loading while checking auth
-  if (isSignedIn === undefined) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">

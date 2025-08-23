@@ -14,13 +14,14 @@ DATABASE_URL="postgresql://username:password@localhost:5432/emailresponder"
 # Get your API key from https://platform.openai.com/api-keys
 OPENAI_API_KEY="sk-your-openai-api-key"
 
-# Clerk Authentication
-# Get your keys from https://dashboard.clerk.com
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_your_clerk_publishable_key"
-CLERK_SECRET_KEY="sk_test_your_clerk_secret_key"
-NEXT_PUBLIC_CLERK_SIGN_IN_URL="/sign-in"
-NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL="/emailresponder"
-NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL="/emailresponder"
+# Firebase Authentication
+# Get your keys from https://console.firebase.google.com
+NEXT_PUBLIC_FIREBASE_API_KEY="your_firebase_api_key_here"
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="your_project_id.firebaseapp.com"
+NEXT_PUBLIC_FIREBASE_PROJECT_ID="your_project_id"
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="your_project_id.appspot.com"
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="123456789"
+NEXT_PUBLIC_FIREBASE_APP_ID="1:123456789:web:abcdef123456"
 
 # App Configuration
 NEXT_PUBLIC_APP_URL="http://localhost:3000"

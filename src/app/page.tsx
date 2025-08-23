@@ -1,12 +1,23 @@
 'use client';
 
 import { ArrowRightIcon } from '@heroicons/react/24/outline';
-import { useAuth, UserButton } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
 
 export default function HomePage() {
-  const { isSignedIn } = useAuth();
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setIsSignedIn(!!user);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
 
   const handleGetStarted = () => {
     if (isSignedIn) {
@@ -23,6 +34,19 @@ export default function HomePage() {
       router.push('/sign-in');
     }
   };
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+        <div className="container mx-auto px-4 py-16">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">

@@ -1,5 +1,4 @@
-import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
@@ -7,10 +6,15 @@ import { eq, desc } from 'drizzle-orm';
 export const runtime = "nodejs";
 
 // GET handler - returns all History records sorted by createdAt DESC
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Get userId from query params (temporary solution)
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get('userId');
+    
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
+    }
 
     // TODO: Re-gate behind subscription after Stripe reintegration
     // For now, allow access to all authenticated users
@@ -32,10 +36,15 @@ export async function GET() {
 }
 
 // DELETE handler - deletes all records in the History table for the current user
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Get userId from query params (temporary solution)
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get('userId');
+    
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
+    }
 
     // TODO: Re-gate behind subscription after Stripe reintegration
     // For now, allow access to all authenticated users

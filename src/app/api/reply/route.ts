@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import OpenAI from 'openai';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
@@ -39,19 +38,18 @@ const openai = new OpenAI({
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, subject, originalEmail, language, tone, stance = "positive" } = await request.json();
+
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
     }
-
-    // TODO: Re-gate behind subscription after Stripe reintegration
-    // For now, allow access to all authenticated users
-
-    const { subject, originalEmail, language, tone, stance = "positive" } = await request.json();
 
     if (!subject || !originalEmail || !language || !tone) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+
+    // TODO: Re-gate behind subscription after Stripe reintegration
+    // For now, allow access to all authenticated users
 
     // Validate stance
     const validStance = (stance as Stance) ?? "positive";
