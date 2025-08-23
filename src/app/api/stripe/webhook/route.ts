@@ -99,19 +99,45 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      case "invoice.payment_failed": {
-        const invoice = event.data.object as Stripe.Invoice;
-        const subId = (invoice.subscription as string) || "";
-        if (subId) {
-          const sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
-          const customer = await stripe.customers.retrieve(sub.customer as string);
-          const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
-          if (firebaseUid) {
-            await persistFromSubscription(firebaseUid, sub);
-          }
-        }
-        break;
-      }
+     case "invoice.payment_failed": {
+  const invoice = event.data.object as Stripe.Invoice;
+
+  // Some Stripe typings don't expose `subscription` on Invoice anymore.
+  // Read it defensively and fall back to listing subs by customer.
+  const customerId = (invoice.customer as string) ?? null;
+  const subId = (invoice as any)?.subscription ?? null;
+
+  let sub: Stripe.Subscription | null = null;
+
+  if (subId) {
+    sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
+  } else if (customerId) {
+    const list = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 1,
+    });
+    sub = list.data[0] ?? null;
+  }
+
+  if (sub && customerId) {
+    const customer = await stripe.customers.retrieve(customerId);
+    const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
+    const priceId = sub.items.data[0]?.price?.id ?? null;
+
+    if (firebaseUid) {
+      await setSubscriptionStatus({
+        firebaseUid,
+        subscriptionId: sub.id,
+        priceId,
+        status: sub.status, // will typically move to 'past_due' on failure
+        currentPeriodEnd: (sub as any)?.current_period_end ?? null,
+      });
+    }
+  }
+
+  break;
+}
 
       // Optional: handle async payment outcomes
       case "checkout.session.async_payment_succeeded":
