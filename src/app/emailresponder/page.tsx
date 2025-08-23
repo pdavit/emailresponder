@@ -1,149 +1,90 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { CheckIcon, ClipboardIcon, ArrowPathIcon, TrashIcon, MagnifyingGlassIcon, ClockIcon, EyeIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { useSearchParams } from 'next/navigation';
+import { History } from "@/types/history";
 
-const languages = [
-  { value: 'english', label: 'English' },
-  { value: 'spanish', label: 'Spanish' },
-  { value: 'german', label: 'German' },
-  { value: 'french', label: 'French' },
-  { value: 'chinese-simplified', label: 'Chinese Simplified' }
-];
-
-const tones = [
-  { value: 'formal', label: 'Formal' },
-  { value: 'informal', label: 'Informal' }
-];
-
-interface HistoryItem {
-  id: number;
-  subject: string;
-  originalEmail: string;
-  reply: string;
-  language: string;
-  tone: string;
-  createdAt: string;
+// Copy Button Component
+function CopyReplyButton({ getText }: { getText: () => string }) {
+  const [copied, setCopied] = useState(false);
+  
+  async function handleCopy() {
+    try {
+      const text = getText()?.trim();
+      if (!text) throw new Error("Nothing to copy");
+      
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Fallback for older browsers
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to copy. Try Ctrl/Cmd+C.");
+    }
+  }
+  
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors duration-200 rounded-md px-3 py-2 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      style={{ pointerEvents: "auto", position: "relative", zIndex: 10 }}
+      aria-live="polite"
+    >
+      <ClipboardIcon className="h-5 w-5" />
+      {copied ? "Copied!" : "Copy"}
+    </button>
+  );
 }
 
 export default function EmailResponderPage() {
+  const { isSignedIn, isLoaded } = useAuth();
   const searchParams = useSearchParams();
-  const [subject, setSubject] = useState('');
-  const [originalEmail, setOriginalEmail] = useState('');
-  const [language, setLanguage] = useState('english');
-  const [tone, setTone] = useState('formal');
-  const [generatedReply, setGeneratedReply] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  
-  // History states
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
 
-  // Single item delete states
-  const [showSingleDeleteModal, setShowSingleDeleteModal] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState<HistoryItem | null>(null);
+  // Form states
+  const [subject, setSubject] = useState("");
+  const [originalEmail, setOriginalEmail] = useState("");
+  const [language, setLanguage] = useState("English");
+  const [tone, setTone] = useState("professional");
+  const [stance, setStance] = useState<"positive" | "negative" | "neutral">("positive");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedReply, setGeneratedReply] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  // History states
+  const [history, setHistory] = useState<History[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  // Delete states
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<History | null>(null);
   const [isDeletingSingle, setIsDeletingSingle] = useState(false);
 
   // View details states
   const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<History | null>(null);
 
-  // Subscription check state
-  const [isCheckingSubscription, setIsCheckingSubscription] = useState(true);
-  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-
-  // Check if user just completed payment
-  const isSuccessFromStripe = searchParams.get('success') === 'true';
-
-  const checkSubscription = useCallback(async () => {
-    try {
-      setSubscriptionError(null);
-      const response = await fetch('/api/subscription-status');
-      
-      if (response.ok) {
-        const data = await response.json();
-        
-        if (!data.hasActiveSubscription) {
-          // If user just completed payment, wait a bit for webhook to process
-          if (isSuccessFromStripe) {
-            console.log('Payment completed, waiting for webhook processing...');
-            // Wait 3 seconds for webhook to process, then check again
-            setTimeout(async () => {
-              const retryResponse = await fetch('/api/subscription-status');
-              if (retryResponse.ok) {
-                const retryData = await retryResponse.json();
-                if (retryData.hasActiveSubscription) {
-                  setShowSuccessMessage(true);
-                  setIsCheckingSubscription(false);
-                  return;
-                }
-              }
-              // If still no subscription after retry, redirect to checkout
-              window.location.href = '/subscribe';
-            }, 3000);
-            return;
-          }
-          
-          // Not from Stripe success, redirect to subscribe page
-          window.location.href = '/subscribe';
-          return;
-        } else {
-          // User has active subscription
-          if (isSuccessFromStripe) {
-            setShowSuccessMessage(true);
-          }
-        }
-      } else {
-        // If there's an error and user just completed payment, don't redirect immediately
-        if (isSuccessFromStripe) {
-          console.log('Error checking subscription after payment, waiting...');
-          setTimeout(() => {
-            window.location.href = '/subscribe';
-          }, 5000);
-          return;
-        }
-        // Not from Stripe success, redirect to subscribe page
-        window.location.href = '/subscribe';
-        return;
-      }
-    } catch (error) {
-      console.error('Error checking subscription:', error);
-      setSubscriptionError('Failed to check subscription status');
-      
-      // If user just completed payment, wait before redirecting
-      if (isSuccessFromStripe) {
-        setTimeout(() => {
-          window.location.href = '/subscribe';
-        }, 5000);
-        return;
-      }
-      
-      // Not from Stripe success, redirect to subscribe page
-      window.location.href = '/subscribe';
-      return;
-    } finally {
-      setIsCheckingSubscription(false);
-    }
-  }, [isSuccessFromStripe]);
-
-  // Check subscription on component mount
+  // Load history on component mount
   useEffect(() => {
-    checkSubscription();
-  }, [checkSubscription]);
-
-  // Load history on component mount (only after subscription check)
-  useEffect(() => {
-    if (!isCheckingSubscription) {
-      loadHistory();
-    }
-  }, [isCheckingSubscription]);
+    loadHistory();
+  }, []);
 
   const loadHistory = async () => {
     setIsLoadingHistory(true);
@@ -169,7 +110,8 @@ export default function EmailResponderPage() {
       return;
     }
 
-    setIsLoading(true);
+    setIsGenerating(true);
+    setError(null);
     try {
       const response = await fetch('/api/reply', {
         method: 'POST',
@@ -181,6 +123,7 @@ export default function EmailResponderPage() {
           originalEmail,
           language,
           tone,
+          stance,
         }),
       });
 
@@ -196,113 +139,136 @@ export default function EmailResponderPage() {
       await loadHistory();
     } catch (error) {
       console.error('Error generating reply:', error);
-      alert(error instanceof Error ? error.message : 'Failed to generate reply. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to generate reply. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsGenerating(false);
     }
   };
 
   const handleClear = () => {
     setSubject('');
     setOriginalEmail('');
-    setLanguage('english');
-    setTone('formal');
+    setLanguage('English');
+    setTone('professional');
+    setStance('positive');
     setGeneratedReply('');
-    setCopied(false);
+    setError(null);
   };
 
-  const handleCopy = async () => {
-    if (generatedReply) {
-      try {
-        await navigator.clipboard.writeText(generatedReply);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch (error) {
-        console.error('Failed to copy text:', error);
-        alert('Failed to copy to clipboard');
-      }
-    }
+  // Modal state management functions
+  const openDeleteAllModal = () => {
+    setIsDeleting(false);   // always reset
+    setIsConfirmOpen(true);
+  };
+
+  const closeDeleteAllModal = () => {
+    setIsDeleting(false);   // reset on close
+    setIsConfirmOpen(false);
   };
 
   const handleDeleteHistory = async () => {
-    setIsDeleting(true);
     try {
+      setIsDeleting(true);
+      
+      console.log('🚀 Starting bulk delete...');
+      
       const response = await fetch('/api/history', {
         method: 'DELETE',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete history');
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error ?? 'Failed to delete history. Please try again.';
+        console.error('❌ Delete history failed:', errorMessage);
+        alert(errorMessage);
+        setIsDeleting(false);
+        return;
       }
 
-      // Clear history state instead of refreshing the page
+      const data = await response.json();
+      console.log(`✅ Successfully deleted ${data.deletedCount} history items`);
+      
+      // Clear history state
       setHistory([]);
-      setShowDeleteModal(false);
+      
+      // Show success message
+      alert(`Successfully deleted ${data.deletedCount} history items`);
+      
+      // Close the modal
+      closeDeleteAllModal();
+      
     } catch (error) {
-      console.error('Error deleting history:', error);
-      alert('Failed to delete history. Please try again.');
-    } finally {
+      console.error('❌ Error deleting history:', error);
+      alert('Network error. Please try again.');
       setIsDeleting(false);
     }
   };
 
-  const handleSingleDelete = (item: HistoryItem, e: React.MouseEvent) => {
+  const handleSingleDelete = (item: History, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent triggering the card click
     setItemToDelete(item);
-    setShowSingleDeleteModal(true);
+    setIsConfirmOpen(true); // Open confirmation modal
   };
 
   const confirmSingleDelete = async () => {
     if (!itemToDelete) return;
 
-    setIsDeletingSingle(true);
     try {
+      setIsDeletingSingle(true);
+      
       const response = await fetch(`/api/history/${itemToDelete.id}`, {
         method: 'DELETE',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete item');
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error ?? 'Failed to delete item. Please try again.';
+        console.error('❌ Single delete failed:', errorMessage);
+        alert(errorMessage);
+        return;
       }
 
       // Remove the item from the local state
       setHistory(prev => prev.filter(item => item.id !== itemToDelete.id));
-      setShowSingleDeleteModal(false);
       setItemToDelete(null);
+      
+      // Show success message
+      alert('Item deleted successfully');
+      
     } catch (error) {
-      console.error('Error deleting item:', error);
-      alert('Failed to delete item. Please try again.');
+      console.error('❌ Error deleting item:', error);
+      alert('Network error. Please try again.');
     } finally {
+      // Always reset the loading state, regardless of success or failure
       setIsDeletingSingle(false);
     }
   };
 
-  const handleViewDetails = (item: HistoryItem, e: React.MouseEvent) => {
+  const handleViewDetails = (item: History, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent triggering the card click
     setSelectedItem(item);
     setShowDetailsModal(true);
   };
 
-  const handleHistoryItemClick = (item: HistoryItem) => {
+  const handleHistoryItemClick = (item: History) => {
     setSubject(item.subject);
     setOriginalEmail(item.originalEmail);
     setLanguage(item.language);
     setTone(item.tone);
     setGeneratedReply(item.reply);
-    setCopied(false);
     
     // Scroll to top of form
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -317,41 +283,6 @@ export default function EmailResponderPage() {
     item.originalEmail.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Show loading state while checking subscription
-  if (isCheckingSubscription) {
-    return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 dark:text-gray-400">Checking subscription...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show error state if subscription check failed
-  if (subscriptionError) {
-    return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-red-600 dark:text-red-400 mb-4">
-            <svg className="h-12 w-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">Subscription Error</h2>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">{subscriptionError}</p>
-          <button
-            onClick={checkSubscription}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
       <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -363,10 +294,10 @@ export default function EmailResponderPage() {
               Email Responder
             </h1>
             <button
-              onClick={() => setShowDeleteModal(true)}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200"
+              onClick={openDeleteAllModal}
+              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3 px-4 rounded-md transition-colors duration-200"
+              disabled={isDeleting}
             >
-              <TrashIcon className="h-5 w-5" />
               Delete History
             </button>
           </div>
@@ -375,27 +306,20 @@ export default function EmailResponderPage() {
           </p>
         </div>
 
-        {/* Success Message */}
-        {showSuccessMessage && (
-          <div className="mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 px-4 py-3 rounded-lg">
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg">
             <div className="flex items-center">
-              <CheckIcon className="h-5 w-5 mr-2" />
-              <span className="font-medium">Payment Successful!</span>
+              <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <span className="font-medium">Error:</span> {error}
             </div>
-            <p className="mt-1 text-sm">
-              Your subscription has been activated. You can now use all features of Email Responder.
-            </p>
-            <button
-              onClick={() => setShowSuccessMessage(false)}
-              className="mt-2 text-sm underline hover:no-underline"
-            >
-              Dismiss
-            </button>
           </div>
         )}
 
         {/* Delete All Confirmation Modal */}
-        {showDeleteModal && (
+        {isConfirmOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
@@ -406,7 +330,7 @@ export default function EmailResponderPage() {
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => setShowDeleteModal(false)}
+                  onClick={closeDeleteAllModal}
                   className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200"
                   disabled={isDeleting}
                 >
@@ -419,7 +343,6 @@ export default function EmailResponderPage() {
                 >
                   {isDeleting ? (
                     <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
                       Deleting...
                     </>
                   ) : (
@@ -432,7 +355,7 @@ export default function EmailResponderPage() {
         )}
 
         {/* Single Item Delete Confirmation Modal */}
-        {showSingleDeleteModal && itemToDelete && (
+        {itemToDelete && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
@@ -452,8 +375,8 @@ export default function EmailResponderPage() {
               <div className="flex gap-3">
                 <button
                   onClick={() => {
-                    setShowSingleDeleteModal(false);
                     setItemToDelete(null);
+                    setIsConfirmOpen(false); // Close confirmation modal
                   }}
                   className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200"
                   disabled={isDeletingSingle}
@@ -467,7 +390,6 @@ export default function EmailResponderPage() {
                 >
                   {isDeletingSingle ? (
                     <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
                       Deleting...
                     </>
                   ) : (
@@ -588,11 +510,11 @@ export default function EmailResponderPage() {
                     onChange={(e) => setLanguage(e.target.value)}
                     className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   >
-                    {languages.map((lang) => (
-                      <option key={lang.value} value={lang.value}>
-                        {lang.label}
-                      </option>
-                    ))}
+                    <option value="English">English</option>
+                    <option value="Spanish">Spanish</option>
+                    <option value="German">German</option>
+                    <option value="French">French</option>
+                    <option value="Chinese Simplified">Chinese Simplified</option>
                   </select>
                 </div>
 
@@ -605,12 +527,45 @@ export default function EmailResponderPage() {
                     onChange={(e) => setTone(e.target.value)}
                     className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   >
-                    {tones.map((toneOption) => (
-                      <option key={toneOption.value} value={toneOption.value}>
-                        {toneOption.label}
-                      </option>
-                    ))}
+                    <option value="professional">Professional</option>
+                    <option value="casual">Casual</option>
+                    <option value="friendly">Friendly</option>
+                    <option value="formal">Formal</option>
+                    <option value="informal">Informal</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Reply Stance Control */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Reply stance
+                </label>
+                <div className="inline-flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-600">
+                  {(["positive", "negative", "neutral"] as const).map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setStance(opt)}
+                      className={`px-4 py-2 text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                        stance === opt 
+                          ? opt === "positive"
+                            ? "bg-green-600 text-white shadow-sm"
+                            : opt === "negative"
+                            ? "bg-red-600 text-white shadow-sm"
+                            : "bg-blue-600 text-white shadow-sm"
+                          : "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
+                      }`}
+                      aria-pressed={stance === opt}
+                    >
+                      <span className="text-base">
+                        {opt === "positive" ? "✅" : opt === "negative" ? "❌" : "🤔"}
+                      </span>
+                      <span>
+                        {opt === "positive" ? "Positive" : opt === "negative" ? "Negative" : "Neutral"}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -618,12 +573,11 @@ export default function EmailResponderPage() {
               <div className="flex gap-3">
                 <button
                   onClick={handleGenerateReply}
-                  disabled={isLoading}
+                  disabled={isGenerating}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
                 >
-                  {isLoading ? (
+                  {isGenerating ? (
                     <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
                       Generating...
                     </>
                   ) : (
@@ -647,22 +601,7 @@ export default function EmailResponderPage() {
                 Generated Reply
               </h2>
               {generatedReply && (
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors duration-200"
-                >
-                  {copied ? (
-                    <>
-                      <CheckIcon className="h-5 w-5" />
-                      Copied!
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardIcon className="h-5 w-5" />
-                      Copy
-                    </>
-                  )}
-                </button>
+                <CopyReplyButton getText={() => generatedReply} />
               )}
             </div>
             

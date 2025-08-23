@@ -14,19 +14,11 @@ DATABASE_URL="postgresql://username:password@localhost:5432/emailresponder"
 # Get your API key from https://platform.openai.com/api-keys
 OPENAI_API_KEY="sk-your-openai-api-key"
 
-# Stripe Configuration
-# Get your keys from https://dashboard.stripe.com/apikeys
-STRIPE_SECRET_KEY="sk_test_your_stripe_secret_key"
-STRIPE_PUBLISHABLE_KEY="pk_test_your_stripe_publishable_key"
-STRIPE_WEBHOOK_SECRET="whsec_your_webhook_secret"
-STRIPE_PRICE_ID="price_your_stripe_price_id"
-
 # Clerk Authentication
 # Get your keys from https://dashboard.clerk.com
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_your_clerk_publishable_key"
 CLERK_SECRET_KEY="sk_test_your_clerk_secret_key"
 NEXT_PUBLIC_CLERK_SIGN_IN_URL="/sign-in"
-NEXT_PUBLIC_CLERK_SIGN_UP_URL="/sign-up"
 NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL="/emailresponder"
 NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL="/emailresponder"
 
@@ -37,11 +29,11 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 2. Set up the database:
 
 ```bash
-# Generate Prisma client
-npx prisma generate
+# Generate Drizzle client
+npm run db:generate
 
 # Run database migrations
-npx prisma db push
+npm run db:push
 ```
 
 3. Run the development server:
@@ -139,10 +131,6 @@ The application uses a PostgreSQL database with the following schema:
 model User {
   id              String    @id @default(cuid())
   email           String    @unique
-  stripeCustomerId String?  @unique
-  subscriptionId  String?
-  subscriptionStatus String? // 'active', 'canceled', 'past_due', 'unpaid', etc.
-  subscriptionEndDate DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   history         History[]

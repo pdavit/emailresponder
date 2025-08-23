@@ -3,17 +3,19 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '@/lib/db';
 import { history } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
-import { checkSubscriptionStatus } from '@/lib/subscription';
+
+export const runtime = "nodejs";
 
 // GET handler - returns all History records sorted by createdAt DESC
 export async function GET() {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const subscriptionStatus = await checkSubscriptionStatus(userId);
-    if (!subscriptionStatus)
-      return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
+    // TODO: Re-gate behind subscription after Stripe reintegration
+    // For now, allow access to all authenticated users
+
+    console.log('GET /api/history', { userId });
 
     const userHistory = await db
       .select()
@@ -21,6 +23,7 @@ export async function GET() {
       .where(eq(history.userId, userId))
       .orderBy(desc(history.createdAt));
 
+    console.log(`✅ Retrieved ${userHistory.length} history items for user ${userId}`);
     return NextResponse.json(userHistory);
   } catch (error) {
     console.error('❌ Error fetching history:', error);
@@ -28,19 +31,23 @@ export async function GET() {
   }
 }
 
-// DELETE handler - deletes all records in the History table
+// DELETE handler - deletes all records in the History table for the current user
 export async function DELETE() {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const subscriptionStatus = await checkSubscriptionStatus(userId);
-    if (!subscriptionStatus)
-      return NextResponse.json({ error: 'Active subscription required' }, { status: 403 });
+    // TODO: Re-gate behind subscription after Stripe reintegration
+    // For now, allow access to all authenticated users
 
-    await db.delete(history).where(eq(history.userId, userId));
+    console.log('DELETE /api/history - starting bulk delete for user:', userId);
 
-    return NextResponse.json({ message: 'All history records deleted successfully' }, { status: 200 });
+    const deleted = await db.delete(history).where(eq(history.userId, userId)).returning();
+    const deletedCount = deleted.length;
+
+    console.log('✅ DELETE /api/history completed successfully:', { userId, deletedCount });
+
+    return NextResponse.json({ ok: true, deletedCount }, { status: 200 });
   } catch (error) {
     console.error('❌ Error deleting history:', error);
     return NextResponse.json({ error: 'Failed to delete history' }, { status: 500 });

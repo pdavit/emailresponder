@@ -1,3 +1,4 @@
+// src/db/schema.ts
 import {
   pgTable,
   text,
@@ -5,24 +6,25 @@ import {
   serial,
 } from "drizzle-orm/pg-core";
 
-// 👤 Users table (Clerk-compatible: text ID instead of UUID)
+/**
+ * 👤 Users table (Clerk-compatible: text ID instead of UUID)
+ * Payment fields removed - will be re-added when Stripe is integrated
+ */
 export const users = pgTable("User", {
-  id: text("id").primaryKey(), // 🔁 CHANGED: uuid → text for Clerk user IDs
+  id: text("id").primaryKey(), // Clerk user ID
   email: text("email").notNull(),
-  stripeCustomerId: text("stripe_customer_id"),
-  subscriptionId: text("subscription_id"),
-  subscriptionStatus: text("subscription_status"),
-  subscriptionEndDate: timestamp("subscription_end_date"),
-  stripePriceId: text("stripe_price_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// 📨 History table — stores all email interaction data
+/**
+ * 📨 History table — stores all email interaction data
+ * (unchanged)
+ */
 export const history = pgTable("History", {
   id: serial("id").primaryKey(),
 
-  userId: text("user_id").notNull(), // 🔁 CHANGED: uuid → text for Clerk IDs
+  userId: text("user_id").notNull(), // Clerk user ID
 
   subject: text("subject"),
   originalEmail: text("original_email"),
