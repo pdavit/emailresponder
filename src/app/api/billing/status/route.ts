@@ -2,55 +2,65 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export const runtime = "nodejs"; // Stripe SDK requires Node runtime
+// Use the default Node runtime, *not* edge.
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const STRIPE_KEY = process.env.STRIPE_SECRET_KEY;
-if (!STRIPE_KEY) {
-  throw new Error("STRIPE_SECRET_KEY is not set");
-}
-
-const stripe = new Stripe(STRIPE_KEY);
-
-// Handle both camelCase and snake_case from differing Stripe type versions
-function getPeriodEnd(sub: any): number | null {
-  return sub?.currentPeriodEnd ?? sub?.current_period_end ?? null;
+function jsonError(message: string, status = 500) {
+  // keep errors visible in Vercel function logs
+  console.error("[billing/status] error:", message);
+  return NextResponse.json({ error: message }, { status });
 }
 
 export async function GET(req: NextRequest) {
   try {
+    const secret = process.env.STRIPE_SECRET_KEY;
+    if (!secret) return jsonError("Missing STRIPE_SECRET_KEY env", 500);
+
     const { searchParams } = new URL(req.url);
-    const email = (searchParams.get("email") || "").trim().toLowerCase();
+    const email = searchParams.get("email");
+    if (!email) return jsonError("email required", 400);
 
-    if (!email) {
-      return NextResponse.json({ error: "email required" }, { status: 400 });
+    const stripe = new Stripe(secret); // no apiVersion override
+
+    // 1) Look up customer by email
+    const customers = await stripe.customers.list({ email, limit: 1 });
+    if (customers.data.length === 0) {
+      return NextResponse.json({
+        active: false,
+        status: null,
+        currentPeriodEnd: null,
+        priceId: null,
+        reason: "no_customer",
+      });
     }
 
-    const { data: customers } = await stripe.customers.list({ email, limit: 1 });
-    if (customers.length === 0) {
-      return NextResponse.json({ active: false, reason: "no_customer" });
-    }
+    const customerId = customers.data[0].id;
 
-    const customerId = customers[0].id;
-    const { data: subs } = await stripe.subscriptions.list({
+    // 2) Get subscriptions for that customer
+    const subs = await stripe.subscriptions.list({
       customer: customerId,
       status: "all",
       limit: 10,
     });
 
-    const current =
-      subs.find((s) => s.status === "active" || s.status === "trialing") ?? null;
+    // active/trialing wins
+    const current = subs.data.find(
+      (s) => s.status === "active" || s.status === "trialing",
+    );
+
+    // Stripe types: current_period_end is present in the API response, but the
+    // type is a bit stricter. Cast to any when reading it.
+    const currentPeriodEnd =
+      (current as any)?.current_period_end ?? null;
 
     return NextResponse.json({
       active: !!current,
       status: current?.status ?? null,
-      currentPeriodEnd: getPeriodEnd(current),
-      priceId: current?.items?.data?.[0]?.price?.id ?? null,
+      currentPeriodEnd,
+      priceId: current?.items.data[0]?.price?.id ?? null,
     });
   } catch (err: any) {
-    console.error("billing/status error:", err);
-    return NextResponse.json(
-      { error: "internal_error", message: err?.message ?? "Unknown error" },
-      { status: 500 }
-    );
+    return jsonError(err?.message ?? "internal_error", 500);
   }
 }
