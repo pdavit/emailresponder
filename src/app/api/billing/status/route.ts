@@ -51,10 +51,11 @@ export async function GET(req: NextRequest) {
       ["active", "trialing", "past_due", "unpaid"].includes(s.status)
     );
 
-    const currentPeriodEnd =
-      typeof current?.current_period_end === "number"
-        ? current.current_period_end
-        : null;
+   // normalize current_period_end (Stripe returns a number at runtime)
+const currentPeriodEnd =
+  typeof (current as any)?.current_period_end === "number"
+    ? (current as any).current_period_end
+    : null;
 
     const priceId = current?.items?.data?.[0]?.price?.id ?? null;
 
