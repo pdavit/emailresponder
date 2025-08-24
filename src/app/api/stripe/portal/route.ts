@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import stripe from "@/lib/stripe";
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // avoid caching any errors
+
 export async function POST(req: NextRequest) {
   try {
     const { email } = await req.json();
