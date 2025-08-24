@@ -10,13 +10,13 @@ import {
   EyeIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
-import { onAuthStateChanged } from "firebase/auth";
 
-import { History } from "@/types/history";
 import RequireAuth from "@/components/RequireAuth";
 import RequireSubscription from "@/components/RequireSubscription";
+import ProfileMenu from "@/components/ProfileMenu";
+import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import UserMenu from "@/components/UserMenu";
+import { History } from "@/types/history";
 
 /* ------------------------------- Copy Button ------------------------------- */
 function CopyReplyButton({ getText }: { getText: () => string }) {
@@ -65,11 +65,15 @@ function CopyReplyButton({ getText }: { getText: () => string }) {
 
 /* --------------------------------- Page ---------------------------------- */
 export default function EmailResponderPage() {
-  // Track current user id so we can gate API calls
+  // Auth state
   const [uid, setUid] = useState<string | null>(null);
+  const [email, setEmail] = useState<string>("");
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUid(u?.uid ?? null);
+      setEmail(u?.email ?? "");
+    });
     return () => unsub();
   }, []);
 
@@ -92,7 +96,7 @@ export default function EmailResponderPage() {
   const [searchTerm, setSearchTerm] = useState("");
 
   // Delete / modal state
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false); // used for "delete all" and to gate visibility while single-delete is open
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<History | null>(null);
   const [isDeletingSingle, setIsDeletingSingle] = useState(false);
@@ -180,7 +184,7 @@ export default function EmailResponderPage() {
     setError(null);
   };
 
-  // Delete All modals
+  // Delete modals
   const openDeleteAllModal = () => {
     setIsDeleting(false);
     setIsConfirmOpen(true);
@@ -247,15 +251,13 @@ export default function EmailResponderPage() {
         return;
       }
       setHistory((prev) => prev.filter((h) => h.id !== itemToDelete.id));
+      setItemToDelete(null);
       alert("Item deleted successfully");
     } catch (err) {
       console.error("❌ Error deleting item:", err);
       alert("Network error. Please try again.");
     } finally {
-      // Always close the single-delete flow cleanly
       setIsDeletingSingle(false);
-      setItemToDelete(null);
-      setIsConfirmOpen(false);
     }
   };
 
@@ -317,7 +319,7 @@ export default function EmailResponderPage() {
                   >
                     Delete History
                   </button>
-                  <UserMenu />
+                  <ProfileMenu userEmail={email} />
                 </div>
               </div>
               <p className="text-gray-600 dark:text-gray-400">
@@ -506,6 +508,7 @@ export default function EmailResponderPage() {
               </div>
             )}
 
+            {/* Main two-column */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Input Form */}
               <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
@@ -557,9 +560,7 @@ export default function EmailResponderPage() {
                         <option value="Spanish">Spanish</option>
                         <option value="German">German</option>
                         <option value="French">French</option>
-                        <option value="Chinese Simplified">
-                          Chinese Simplified
-                        </option>
+                        <option value="Chinese Simplified">Chinese Simplified</option>
                       </select>
                     </div>
 
@@ -587,40 +588,30 @@ export default function EmailResponderPage() {
                       Reply stance
                     </label>
                     <div className="inline-flex overflow-hidden rounded-md border border-gray-300 dark:border-gray-600">
-                      {(["positive", "negative", "neutral"] as const).map(
-                        (opt) => (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => setStance(opt)}
-                            className={`px-4 py-2 text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
-                              stance === opt
-                                ? opt === "positive"
-                                  ? "bg-green-600 text-white shadow-sm"
-                                  : opt === "negative"
+                      {(["positive", "negative", "neutral"] as const).map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => setStance(opt)}
+                          className={`px-4 py-2 text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                            stance === opt
+                              ? opt === "positive"
+                                ? "bg-green-600 text-white shadow-sm"
+                                : opt === "negative"
                                   ? "bg-red-600 text-white shadow-sm"
                                   : "bg-blue-600 text-white shadow-sm"
-                                : "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
-                            }`}
-                            aria-pressed={stance === opt}
-                          >
-                            <span className="text-base">
-                              {opt === "positive"
-                                ? "✅"
-                                : opt === "negative"
-                                ? "❌"
-                                : "🤔"}
-                            </span>
-                            <span>
-                              {opt === "positive"
-                                ? "Positive"
-                                : opt === "negative"
-                                ? "Negative"
-                                : "Neutral"}
-                            </span>
-                          </button>
-                        ),
-                      )}
+                              : "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
+                          }`}
+                          aria-pressed={stance === opt}
+                        >
+                          <span className="text-base">
+                            {opt === "positive" ? "✅" : opt === "negative" ? "❌" : "🤔"}
+                          </span>
+                          <span>
+                            {opt === "positive" ? "Positive" : opt === "negative" ? "Negative" : "Neutral"}
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -649,9 +640,7 @@ export default function EmailResponderPage() {
                   <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
                     Generated Reply
                   </h2>
-                  {generatedReply && (
-                    <CopyReplyButton getText={() => generatedReply} />
-                  )}
+                  {generatedReply && <CopyReplyButton getText={() => generatedReply} />}
                 </div>
 
                 <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 min-h-[300px]">
@@ -675,7 +664,7 @@ export default function EmailResponderPage() {
                   Email History
                 </h2>
                 <div className="relative">
-                  <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
                     type="text"
                     placeholder="Search history..."
@@ -689,9 +678,7 @@ export default function EmailResponderPage() {
               {isLoadingHistory ? (
                 <div className="text-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4" />
-                  <p className="text-gray-600 dark:text-gray-400">
-                    Loading history...
-                  </p>
+                  <p className="text-gray-600 dark:text-gray-400">Loading history...</p>
                 </div>
               ) : historyError ? (
                 <div className="text-center py-8">
@@ -710,9 +697,7 @@ export default function EmailResponderPage() {
                       />
                     </svg>
                   </div>
-                  <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    {historyError}
-                  </p>
+                  <p className="text-gray-600 dark:text-gray-400 mb-4">{historyError}</p>
                   <button
                     onClick={() => uid && loadHistory(uid)}
                     className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
@@ -723,9 +708,7 @@ export default function EmailResponderPage() {
               ) : filteredHistory.length === 0 ? (
                 <div className="text-center py-8">
                   <p className="text-gray-600 dark:text-gray-400">
-                    {searchTerm
-                      ? "No history items match your search."
-                      : "No email history yet."}
+                    {searchTerm ? "No history items match your search." : "No email history yet."}
                   </p>
                 </div>
               ) : (
