@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function ThankYouPage() {
   const router = useRouter();
-  const params = useSearchParams();
 
-  // Only allow same-origin paths; fall back to /emailresponder
-  const target = useMemo(() => {
-    const raw = params?.get("redirect") || "/emailresponder";
-    return raw.startsWith("/") ? raw : "/emailresponder";
-  }, [params]);
-
+  // Default redirect target
+  const [target, setTarget] = useState("/emailresponder");
   const [seconds, setSeconds] = useState(3);
 
+  // Read ?redirect=/path safely on the client (no useSearchParams)
+  useEffect(() => {
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    const param = new URLSearchParams(search).get("redirect");
+    if (param && param.startsWith("/")) setTarget(param); // guard against external URLs
+  }, []);
+
+  // Countdown + auto redirect
   useEffect(() => {
     const tick = setInterval(() => setSeconds((s) => (s > 0 ? s - 1 : 0)), 1000);
     const to = setTimeout(() => router.replace(target), 3000);
@@ -34,7 +37,7 @@ export default function ThankYouPage() {
           Your subscription is active. Welcome to <span className="font-semibold">EmailResponder</span>!
         </p>
         <p className="text-sm text-gray-500 mb-8" aria-live="polite">
-          Redirecting to the app in <span className="font-semibold">{seconds}s</span>…
+          Redirecting in <span className="font-semibold">{seconds}s</span>…
         </p>
 
         <div className="flex items-center justify-center gap-3">
