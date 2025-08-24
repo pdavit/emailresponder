@@ -1,7 +1,7 @@
 // app/emailresponder/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ClipboardIcon,
   TrashIcon,
@@ -16,6 +16,7 @@ import { History } from "@/types/history";
 import RequireAuth from "@/components/RequireAuth";
 import RequireSubscription from "@/components/RequireSubscription";
 import { auth } from "@/lib/firebase";
+import UserMenu from "@/components/UserMenu";
 
 /* ------------------------------- Copy Button ------------------------------- */
 function CopyReplyButton({ getText }: { getText: () => string }) {
@@ -91,7 +92,7 @@ export default function EmailResponderPage() {
   const [searchTerm, setSearchTerm] = useState("");
 
   // Delete / modal state
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false); // used for "delete all" and to gate visibility while single-delete is open
   const [isDeleting, setIsDeleting] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<History | null>(null);
   const [isDeletingSingle, setIsDeletingSingle] = useState(false);
@@ -179,7 +180,7 @@ export default function EmailResponderPage() {
     setError(null);
   };
 
-  // Delete modals
+  // Delete All modals
   const openDeleteAllModal = () => {
     setIsDeleting(false);
     setIsConfirmOpen(true);
@@ -246,13 +247,15 @@ export default function EmailResponderPage() {
         return;
       }
       setHistory((prev) => prev.filter((h) => h.id !== itemToDelete.id));
-      setItemToDelete(null);
       alert("Item deleted successfully");
     } catch (err) {
       console.error("❌ Error deleting item:", err);
       alert("Network error. Please try again.");
     } finally {
+      // Always close the single-delete flow cleanly
       setIsDeletingSingle(false);
+      setItemToDelete(null);
+      setIsConfirmOpen(false);
     }
   };
 
@@ -306,13 +309,16 @@ export default function EmailResponderPage() {
                 <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
                   Email Responder
                 </h1>
-                <button
-                  onClick={openDeleteAllModal}
-                  className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3 px-4 rounded-md transition-colors duration-200"
-                  disabled={isDeleting}
-                >
-                  Delete History
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={openDeleteAllModal}
+                    className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3 px-4 rounded-md transition-colors duration-200"
+                    disabled={isDeleting}
+                  >
+                    Delete History
+                  </button>
+                  <UserMenu />
+                </div>
               </div>
               <p className="text-gray-600 dark:text-gray-400">
                 Generate professional email replies with AI assistance
@@ -592,8 +598,8 @@ export default function EmailResponderPage() {
                                 ? opt === "positive"
                                   ? "bg-green-600 text-white shadow-sm"
                                   : opt === "negative"
-                                    ? "bg-red-600 text-white shadow-sm"
-                                    : "bg-blue-600 text-white shadow-sm"
+                                  ? "bg-red-600 text-white shadow-sm"
+                                  : "bg-blue-600 text-white shadow-sm"
                                 : "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                             }`}
                             aria-pressed={stance === opt}
@@ -602,15 +608,15 @@ export default function EmailResponderPage() {
                               {opt === "positive"
                                 ? "✅"
                                 : opt === "negative"
-                                  ? "❌"
-                                  : "🤔"}
+                                ? "❌"
+                                : "🤔"}
                             </span>
-                            <span className="">
+                            <span>
                               {opt === "positive"
                                 ? "Positive"
                                 : opt === "negative"
-                                  ? "Negative"
-                                  : "Neutral"}
+                                ? "Negative"
+                                : "Neutral"}
                             </span>
                           </button>
                         ),
