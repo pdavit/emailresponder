@@ -1,7 +1,7 @@
 // src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
-import stripe from "@/lib/stripe";
+import type Stripe from "stripe";   // type-only
+import stripe from "@/lib/stripe";   // the actual client instance
 
 export const runtime = "nodejs";        // Stripe SDK needs Node
 export const dynamic = "force-dynamic"; // no caching for webhooks
