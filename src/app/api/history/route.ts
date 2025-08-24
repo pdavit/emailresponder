@@ -1,64 +1,84 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { history } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+// src/app/api/history/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { adminAuth, adminDb } from "@/lib/firebase-admin"; // see note below
 
-export const runtime = "nodejs";
+// Helper: verify Firebase ID token and return the uid
+async function requireUid(req: NextRequest): Promise<string> {
+  const authz = req.headers.get("authorization") || "";
+  const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
+  if (!token) throw new Error("missing_token");
 
-// GET handler - returns all History records sorted by createdAt DESC
-export async function GET(request: NextRequest) {
+  const decoded = await adminAuth.verifyIdToken(token);
+  return decoded.uid;
+}
+
+// GET /api/history  -> list items for current user
+export async function GET(req: NextRequest) {
   try {
-    // Get userId from query params (temporary solution)
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
-    }
+    const uid = await requireUid(req);
 
-    // TODO: Re-gate behind subscription after Stripe reintegration
-    // For now, allow access to all authenticated users
+    const snap = await adminDb
+      .collection("users")
+      .doc(uid)
+      .collection("history")
+      .orderBy("createdAt", "desc")
+      .limit(200)
+      .get();
 
-    console.log('GET /api/history', { userId });
-
-    const userHistory = await db
-      .select()
-      .from(history)
-      .where(eq(history.userId, userId))
-      .orderBy(desc(history.createdAt));
-
-    console.log(`✅ Retrieved ${userHistory.length} history items for user ${userId}`);
-    return NextResponse.json(userHistory);
-  } catch (error) {
-    console.error('❌ Error fetching history:', error);
-    return NextResponse.json({ error: 'Failed to fetch history' }, { status: 500 });
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return NextResponse.json(items);
+  } catch (e: any) {
+    const code = e?.message === "missing_token" ? 401 : 500;
+    return NextResponse.json({ error: "Failed to load history" }, { status: code });
   }
 }
 
-// DELETE handler - deletes all records in the History table for the current user
-export async function DELETE(request: NextRequest) {
+// POST /api/history  -> add one item for current user
+export async function POST(req: NextRequest) {
   try {
-    // Get userId from query params (temporary solution)
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
+    const uid = await requireUid(req);
+    const body = await req.json();
+
+    const { subject, originalEmail, reply, language, tone } = body || {};
+    if (!subject || !originalEmail || !reply) {
+      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
 
-    // TODO: Re-gate behind subscription after Stripe reintegration
-    // For now, allow access to all authenticated users
+    const now = Date.now();
+    const ref = await adminDb
+      .collection("users")
+      .doc(uid)
+      .collection("history")
+      .add({
+        subject,
+        originalEmail,
+        reply,
+        language: language || "English",
+        tone: tone || "professional",
+        createdAt: now,
+      });
 
-    console.log('DELETE /api/history - starting bulk delete for user:', userId);
+    return NextResponse.json({ id: ref.id });
+  } catch (e: any) {
+    const code = e?.message === "missing_token" ? 401 : 500;
+    return NextResponse.json({ error: "Failed to save history" }, { status: code });
+  }
+}
 
-    const deleted = await db.delete(history).where(eq(history.userId, userId)).returning();
-    const deletedCount = deleted.length;
+// DELETE /api/history  -> delete ALL history for current user
+export async function DELETE(req: NextRequest) {
+  try {
+    const uid = await requireUid(req);
 
-    console.log('✅ DELETE /api/history completed successfully:', { userId, deletedCount });
+    const col = adminDb.collection("users").doc(uid).collection("history");
+    const snap = await col.limit(500).get();
+    const batch = adminDb.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
 
-    return NextResponse.json({ ok: true, deletedCount }, { status: 200 });
-  } catch (error) {
-    console.error('❌ Error deleting history:', error);
-    return NextResponse.json({ error: 'Failed to delete history' }, { status: 500 });
+    return NextResponse.json({ deletedCount: snap.size });
+  } catch (e: any) {
+    const code = e?.message === "missing_token" ? 401 : 500;
+    return NextResponse.json({ error: "Failed to delete history" }, { status: code });
   }
 }

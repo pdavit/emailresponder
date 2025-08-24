@@ -1,51 +1,46 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { history } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+// src/app/api/history/[id]/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic"; // don't cache API responses
 
+// DELETE /api/history/:id  -> delete one history doc for the authenticated user
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  req: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
-    // Get userId from query params (temporary solution)
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
+    // --- Verify Firebase ID token ---
+    const authz = req.headers.get("authorization") || "";
+    const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
+    if (!token) {
+      return NextResponse.json({ error: "Missing auth token" }, { status: 401 });
+    }
+    const { uid } = await adminAuth.verifyIdToken(token);
+
+    // --- Validate param ---
+    const id = params?.id;
+    if (!id) {
+      return NextResponse.json({ error: "Missing id" }, { status: 400 });
     }
 
-    const { id } = await params;
-    
-    // Parse and validate the ID parameter
-    const numericId = Number(id);
-    if (isNaN(numericId) || numericId <= 0) {
-      return NextResponse.json({ error: 'Invalid ID' }, { status: 400 });
+    // --- Delete only under users/{uid}/history/{id} ---
+    const ref = adminDb.collection("users").doc(uid).collection("history").doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      return NextResponse.json({ error: "History item not found" }, { status: 404 });
     }
 
-    console.log("DELETE /api/history/[id] - starting single delete:", { userId, id: numericId });
-
-    // Delete the specific history item for the current user
-    const deleted = await db
-      .delete(history)
-      .where(and(eq(history.id, numericId), eq(history.userId, userId)))
-      .returning();
-
-    if (deleted.length === 0) {
-      console.log("⚠️ DELETE /api/history/[id] - item not found:", { userId, id: numericId });
-      return NextResponse.json({ error: 'History item not found' }, { status: 404 });
-    }
-
-    console.log("✅ DELETE /api/history/[id] completed successfully:", { userId, id: numericId });
+    await ref.delete();
     return NextResponse.json({ ok: true });
-  } catch (error) {
-    console.error('❌ Error deleting history item:', error);
+  } catch (err: any) {
+    const status = err?.code === "auth/argument-error" || err?.message?.includes("auth")
+      ? 401
+      : 500;
     return NextResponse.json(
-      { error: 'Failed to delete history item' },
-      { status: 500 }
+      { error: "Failed to delete history item" },
+      { status }
     );
   }
 }

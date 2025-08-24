@@ -55,34 +55,50 @@ export default function ProfileMenu({ userEmail }: Props) {
     }
   }
 
-  async function handleCancelSubscription() {
-    if (!userEmail) return alert("You're not signed in.");
-    setIsCancelling(true);
+ async function handleCancelSubscription(userEmail: string) {
+  if (!userEmail) return alert("You're not signed in.");
+
+  setIsCancelling(true);
+  try {
+    const res = await fetch("/api/stripe/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: userEmail, immediate: true }),
+    });
+
+    // Safely parse JSON (handles empty body)
+    let payload: any = null;
     try {
-      const res = await fetch("/api/stripe/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: userEmail }),
-      });
-
-      // Safely parse JSON (in case the API returns an empty body)
-      let payload: any = null;
-      try { payload = await res.json(); } catch {}
-
-      if (!res.ok) {
-        alert(payload?.error || payload?.message || "Failed to cancel.");
-        return;
-      }
-
-      alert("Your subscription will end at the current period end.");
-    } catch (err) {
-      console.error("Cancel error:", err);
-      alert("Network error. Please try again.");
-    } finally {
-      setIsCancelling(false);
-      setIsCancelOpen(false);
+      payload = await res.json();
+    } catch {
+      /* ignore parse errors */
     }
+
+    if (!res.ok) {
+      alert(payload?.error || payload?.message || "Failed to cancel.");
+      return;
+    }
+
+    if (payload?.immediate) {
+      alert("Your subscription has been cancelled immediately. No refunds will be issued.");
+    } else {
+      const when =
+        payload?.currentPeriodEnd
+          ? new Date(payload.currentPeriodEnd * 1000).toLocaleString()
+          : "the end of your current period";
+      alert(`Your subscription will end at ${when}.`);
+    }
+
+    // Optional: refresh any local billing status UI
+    // await refreshStatus?.();
+  } catch (err) {
+    console.error("Cancel error:", err);
+    alert("Network error. Please try again.");
+  } finally {
+    setIsCancelling(false);
+    setIsCancelOpen(false);
   }
+}
 
   return (
     <div ref={ref} className="relative">

@@ -1,43 +1,82 @@
 // src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import type Stripe from "stripe";   // type-only
-import stripe from "@/lib/stripe";   // the actual client instance
+import type Stripe from "stripe"; // type only
+import stripe from "@/lib/stripe"; // configured server Stripe client
+
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 export const runtime = "nodejs";        // Stripe SDK needs Node
 export const dynamic = "force-dynamic"; // no caching for webhooks
 
-// ---- TODO: replace with real DB calls ----
-async function linkCustomerToUser(_opts: { firebaseUid: string; customerId: string }) {}
-async function setSubscriptionStatus(_opts: {
+// --- Health check (Stripe may ping, and useful for uptime) ---
+export async function GET() {
+  return NextResponse.json({ ok: true });
+}
+
+/* ------------------------- Firestore helpers ------------------------- */
+
+function billingDoc(uid: string) {
+  // You can change the path shape if you prefer.
+  return adminDb.collection("users").doc(uid);
+}
+
+async function linkCustomerToUser(opts: { firebaseUid: string; customerId: string }) {
+  const { firebaseUid, customerId } = opts;
+
+  // Persist on your user doc for later reads
+  await billingDoc(firebaseUid).set(
+    {
+      billing: {
+        customerId,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+    },
+    { merge: true },
+  );
+
+  // Ensure future Stripe events can be mapped back to this user without DB lookups
+  try {
+    await stripe.customers.update(customerId, {
+      metadata: { firebaseUid },
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+function getPeriodEnd(sub: any): number | null {
+  // Defensively support both shapes that appear in different TS versions
+  return sub?.current_period_end ?? sub?.currentPeriodEnd ?? null;
+}
+
+async function setSubscriptionStatus(opts: {
   firebaseUid: string;
   subscriptionId: string;
   priceId: string | null;
   status: string;
   currentPeriodEnd: number | null;
-}) {}
-// ------------------------------------------
+}) {
+  const { firebaseUid, subscriptionId, priceId, status, currentPeriodEnd } = opts;
 
-// Liveness probe (Stripe sometimes pings)
-export async function GET() {
-  return NextResponse.json({ ok: true });
+  const active = status === "trialing" || status === "active";
+
+  await billingDoc(firebaseUid).set(
+    {
+      billing: {
+        subscriptionId,
+        priceId,
+        status,
+        currentPeriodEnd,
+        active,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+    },
+    { merge: true },
+  );
 }
 
-// Helper: normalize period end across Stripe type versions
-function getPeriodEnd(sub: any): number | null {
-  return sub?.current_period_end ?? sub?.currentPeriodEnd ?? null;
-}
-
-// Helper: one place to persist subscription state
-async function persistFromSubscription(firebaseUid: string, sub: Stripe.Subscription) {
-  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-  await setSubscriptionStatus({
-    firebaseUid,
-    subscriptionId: sub.id,
-    priceId,
-    status: sub.status,
-    currentPeriodEnd: getPeriodEnd(sub),
-  });
-}
+/* ---------------------------- Main handler --------------------------- */
 
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature") ?? "";
@@ -48,8 +87,9 @@ export async function POST(req: NextRequest) {
   }
 
   let event: Stripe.Event;
+
+  // Stripe requires the *raw* body for signature verification
   try {
-    // IMPORTANT: use raw body for signature verification
     const rawBody = await req.text();
     event = stripe.webhooks.constructEvent(rawBody, sig, secret);
   } catch (err: any) {
@@ -59,10 +99,11 @@ export async function POST(req: NextRequest) {
 
   try {
     switch (event.type) {
+      /* ----- User completes Checkout ----- */
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
 
-        // Prefer metadata, fall back to client_reference_id
+        // Prefer metadata, fall back to client_reference_id if you set it
         const firebaseUid =
           (session.metadata as any)?.firebaseUid ||
           (session.client_reference_id as string) ||
@@ -77,77 +118,94 @@ export async function POST(req: NextRequest) {
 
         if (firebaseUid && subscriptionId) {
           const sub = (await stripe.subscriptions.retrieve(
-            subscriptionId
+            subscriptionId,
           )) as Stripe.Subscription;
-          await persistFromSubscription(firebaseUid, sub);
+
+          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+
+          await setSubscriptionStatus({
+            firebaseUid,
+            subscriptionId: sub.id,
+            priceId,
+            status: sub.status,
+            currentPeriodEnd: getPeriodEnd(sub),
+          });
         }
         break;
       }
 
+      /* ----- Subscription lifecycle changes ----- */
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
         const customerId = sub.customer as string;
 
-        // Retrieve customer to get stored firebaseUid
+        // Map back to your user via customer metadata.firebaseUid
         const customer = await stripe.customers.retrieve(customerId);
         const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
+
         if (firebaseUid) {
-          await persistFromSubscription(firebaseUid, sub);
+          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+
+          await setSubscriptionStatus({
+            firebaseUid,
+            subscriptionId: sub.id,
+            priceId,
+            status: sub.status,
+            currentPeriodEnd: getPeriodEnd(sub),
+          });
         }
         break;
       }
 
-     case "invoice.payment_failed": {
-  const invoice = event.data.object as Stripe.Invoice;
+      /* ----- Payment failed (often moves sub to past_due) ----- */
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
 
-  // Some Stripe typings don't expose `subscription` on Invoice anymore.
-  // Read it defensively and fall back to listing subs by customer.
-  const customerId = (invoice.customer as string) ?? null;
-  const subId = (invoice as any)?.subscription ?? null;
+        const customerId = (invoice.customer as string) ?? null;
+        const subId: string | null = (invoice as any)?.subscription ?? null;
 
-  let sub: Stripe.Subscription | null = null;
+        let sub: Stripe.Subscription | null = null;
 
-  if (subId) {
-    sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
-  } else if (customerId) {
-    const list = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "all",
-      limit: 1,
-    });
-    sub = list.data[0] ?? null;
-  }
+        if (subId) {
+          sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
+        } else if (customerId) {
+          const list = await stripe.subscriptions.list({
+            customer: customerId,
+            status: "all",
+            limit: 1,
+          });
+          sub = list.data[0] ?? null;
+        }
 
-  if (sub && customerId) {
-    const customer = await stripe.customers.retrieve(customerId);
-    const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
-    const priceId = sub.items.data[0]?.price?.id ?? null;
+        if (sub && customerId) {
+          const customer = await stripe.customers.retrieve(customerId);
+          const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
+          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
 
-    if (firebaseUid) {
-      await setSubscriptionStatus({
-        firebaseUid,
-        subscriptionId: sub.id,
-        priceId,
-        status: sub.status, // will typically move to 'past_due' on failure
-        currentPeriodEnd: (sub as any)?.current_period_end ?? null,
-      });
-    }
-  }
+          if (firebaseUid) {
+            await setSubscriptionStatus({
+              firebaseUid,
+              subscriptionId: sub.id,
+              priceId,
+              status: sub.status, // often 'past_due' here
+              currentPeriodEnd: getPeriodEnd(sub),
+            });
+          }
+        }
+        break;
+      }
 
-  break;
-}
-
-      // Optional: handle async payment outcomes
+      // Optional: handle async payment results, etc.
       case "checkout.session.async_payment_succeeded":
       case "checkout.session.async_payment_failed":
       default:
-        // No-op for other events
+        // no-op for other events you don't care about
         break;
     }
 
-    // 200 tells Stripe the event was received successfully
+    // 200 tells Stripe we processed successfully
     return NextResponse.json({ received: true });
   } catch (err) {
     console.error("Webhook handler error:", err);

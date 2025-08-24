@@ -2,56 +2,64 @@ import { NextRequest, NextResponse } from "next/server";
 import stripe from "@/lib/stripe";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+
+type Body =
+  | { email: string }         // your current client uses email
+  | { firebaseUid: string };  // optional, if you pass uid instead
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json().catch(() => ({} as any));
-    if (!email) {
-      return NextResponse.json({ error: "email required" }, { status: 400 });
+    const body = (await req.json()) as Partial<Body>;
+
+    // Prefer firebaseUid if you send it. Fall back to email.
+    let customerId: string | null = null;
+
+    if (body.firebaseUid) {
+      // If you store firebaseUid in customer.metadata (recommended),
+      // list by customer and match in code (Stripe doesn't search metadata).
+      const list = await stripe.customers.list({ limit: 50 });
+      const match = list.data.find(
+        (c: any) => c?.metadata?.firebaseUid === body.firebaseUid
+      );
+      customerId = match?.id ?? null;
+    } else if (body.email) {
+      const list = await stripe.customers.list({ email: body.email, limit: 1 });
+      customerId = list.data[0]?.id ?? null;
     }
 
-    // 1) Find customer by email
-    const customers = await stripe.customers.list({ email, limit: 1 });
-    if (customers.data.length === 0) {
-      return NextResponse.json({ ok: true, state: "no_customer" });
+    if (!customerId) {
+      return NextResponse.json({ error: "Customer not found" }, { status: 404 });
     }
-    const customerId = customers.data[0].id;
 
-    // 2) Find an active/trialing subscription
+    // Find an active or trialing subscription
     const subs = await stripe.subscriptions.list({
       customer: customerId,
       status: "all",
       limit: 10,
     });
-    const current =
-      subs.data.find(s => s.status === "active" || s.status === "trialing") ?? null;
 
-    if (!current) {
-      // Nothing to cancel
-      return NextResponse.json({ ok: true, state: "no_active_subscription" });
+    const sub =
+      subs.data.find(s => s.status === "active" || s.status === "trialing") ??
+      subs.data.find(s => s.status === "past_due" || s.status === "unpaid");
+
+    if (!sub) {
+      return NextResponse.json({ error: "No cancellable subscription" }, { status: 404 });
     }
 
-    // 3) Set cancel at period end (soft cancel)
-    const updated = await stripe.subscriptions.update(current.id, {
-      cancel_at_period_end: true,
-    });
+    // Cancel immediately (no future renewal, no automatic refund)
+    // Newer Stripe API recommends simply calling cancel without params.
+    // If you're on an older pinned API and want to be explicit:
+    // await stripe.subscriptions.cancel(sub.id, { invoice_now: false, prorate: false });
+    const canceled = await stripe.subscriptions.cancel(sub.id);
 
     return NextResponse.json({
       ok: true,
-      state: "scheduled_for_cancellation",
-      subscriptionId: updated.id,
-      cancelAtPeriodEnd: updated.cancel_at_period_end,
-      currentPeriodEnd:
-        typeof (updated as any).current_period_end === "number"
-          ? (updated as any).current_period_end
-          : null,
+      subscriptionId: canceled.id,
+      status: canceled.status,                 // "canceled"
+      canceledAt: canceled.canceled_at ?? null // epoch seconds
     });
   } catch (err: any) {
-    console.error("[stripe/cancel] error:", err);
-    return NextResponse.json(
-      { error: "stripe_cancel_failed", message: err?.message ?? "Unknown error" },
-      { status: 500 }
-    );
+    console.error("Cancel now failed:", err?.message || err);
+    return NextResponse.json({ error: "Failed to cancel subscription" }, { status: 500 });
   }
 }
