@@ -1,84 +1,38 @@
-// src/app/api/history/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth, adminDb } from "@/lib/firebase-admin"; // see note below
+import { db } from "@/lib/db";
+import { history } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
 
-// Helper: verify Firebase ID token and return the uid
-async function requireUid(req: NextRequest): Promise<string> {
-  const authz = req.headers.get("authorization") || "";
-  const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
-  if (!token) throw new Error("missing_token");
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  const decoded = await adminAuth.verifyIdToken(token);
-  return decoded.uid;
-}
-
-// GET /api/history  -> list items for current user
+// GET /api/history?userId=UID
 export async function GET(req: NextRequest) {
-  try {
-    const uid = await requireUid(req);
+  const { searchParams } = new URL(req.url);
+  const userId = searchParams.get("userId");
+  if (!userId) return NextResponse.json([], { status: 200 });
 
-    const snap = await adminDb
-      .collection("users")
-      .doc(uid)
-      .collection("history")
-      .orderBy("createdAt", "desc")
-      .limit(200)
-      .get();
+  const rows = await db
+    .select()
+    .from(history)
+    .where(eq(history.userId, userId))
+    .orderBy(desc(history.createdAt));
 
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    return NextResponse.json(items);
-  } catch (e: any) {
-    const code = e?.message === "missing_token" ? 401 : 500;
-    return NextResponse.json({ error: "Failed to load history" }, { status: code });
-  }
+  return NextResponse.json(rows);
 }
 
-// POST /api/history  -> add one item for current user
-export async function POST(req: NextRequest) {
-  try {
-    const uid = await requireUid(req);
-    const body = await req.json();
-
-    const { subject, originalEmail, reply, language, tone } = body || {};
-    if (!subject || !originalEmail || !reply) {
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
-    }
-
-    const now = Date.now();
-    const ref = await adminDb
-      .collection("users")
-      .doc(uid)
-      .collection("history")
-      .add({
-        subject,
-        originalEmail,
-        reply,
-        language: language || "English",
-        tone: tone || "professional",
-        createdAt: now,
-      });
-
-    return NextResponse.json({ id: ref.id });
-  } catch (e: any) {
-    const code = e?.message === "missing_token" ? 401 : 500;
-    return NextResponse.json({ error: "Failed to save history" }, { status: code });
-  }
-}
-
-// DELETE /api/history  -> delete ALL history for current user
+// DELETE /api/history?userId=UID  -> delete all user's history
 export async function DELETE(req: NextRequest) {
-  try {
-    const uid = await requireUid(req);
-
-    const col = adminDb.collection("users").doc(uid).collection("history");
-    const snap = await col.limit(500).get();
-    const batch = adminDb.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-
-    return NextResponse.json({ deletedCount: snap.size });
-  } catch (e: any) {
-    const code = e?.message === "missing_token" ? 401 : 500;
-    return NextResponse.json({ error: "Failed to delete history" }, { status: code });
+  const { searchParams } = new URL(req.url);
+  const userId = searchParams.get("userId");
+  if (!userId) {
+    return NextResponse.json({ error: "User ID required" }, { status: 400 });
   }
+
+  const deleted = await db
+    .delete(history)
+    .where(eq(history.userId, userId))
+    .returning({ id: history.id });
+
+  return NextResponse.json({ deletedCount: deleted.length });
 }
