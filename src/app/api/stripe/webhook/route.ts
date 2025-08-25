@@ -177,42 +177,52 @@ export async function POST(req: NextRequest) {
       }
 
       /* ---------------------- Payment failed ------------------------ */
-      case "invoice.payment_failed": {
-        const invoice = event.data.object as Stripe.Invoice;
+     case "invoice.payment_failed": {
+  // Some Stripe TS versions don't expose `subscription` on Invoice.
+  type InvoiceMaybeSub = Stripe.Invoice & {
+    subscription?: string | { id: string } | null;
+  };
 
-        const customerId = (invoice.customer as string) ?? null;
-        const subId =
-          typeof invoice.subscription === "string"
-            ? (invoice.subscription as string)
-            : (invoice.subscription as Stripe.Subscription | null)?.id ?? null;
+  const invoice = event.data.object as InvoiceMaybeSub;
 
-        let sub: Stripe.Subscription | null = null;
-        if (subId) {
-          sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
-        } else if (customerId) {
-          const list = await stripe.subscriptions.list({
-            customer: customerId,
-            status: "all",
-            limit: 1,
-          });
-          sub = list.data[0] ?? null;
-        }
+  const customerId = (invoice.customer as string) ?? null;
 
-        if (sub && customerId) {
-          const firebaseUid = await getUidFromCustomer(customerId);
-          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-          if (firebaseUid) {
-            await setSubscriptionStatus({
-              firebaseUid,
-              subscriptionId: sub.id,
-              priceId,
-              status: sub.status, // often "past_due"
-              currentPeriodEnd: getPeriodEnd(sub),
-            });
-          }
-        }
-        break;
-      }
+  // Safely resolve the subscription id if present on the invoice
+  const subId: string | null =
+    typeof invoice.subscription === "string"
+      ? invoice.subscription
+      : invoice.subscription?.id ?? null;
+
+  let sub: Stripe.Subscription | null = null;
+
+  if (subId) {
+    sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
+  } else if (customerId) {
+    // Fallback: get the most recent sub for the customer
+    const list = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 1,
+    });
+    sub = list.data[0] ?? null;
+  }
+
+  if (sub && customerId) {
+    const firebaseUid = await getUidFromCustomer(customerId);
+    const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+
+    if (firebaseUid) {
+      await setSubscriptionStatus({
+        firebaseUid,
+        subscriptionId: sub.id,
+        priceId,
+        status: sub.status, // often "past_due"
+        currentPeriodEnd: getPeriodEnd(sub),
+      });
+    }
+  }
+  break;
+}
 
       // Optionally handle more events (trial_will_end, async_payment_*), else ignore
       default:
