@@ -7,17 +7,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // DELETE /api/history/:id?userId=UID
-export async function DELETE(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(req: Request, ctx: any) {
   const url = new URL(req.url);
   const userId = url.searchParams.get("userId");
   if (!userId) {
     return NextResponse.json({ error: "User ID required" }, { status: 400 });
   }
 
-  const idNum = Number(params.id);
+  const idStr = ctx?.params?.id;
+  const idNum = Number(idStr);
   if (!Number.isFinite(idNum) || idNum <= 0) {
     return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
   }
