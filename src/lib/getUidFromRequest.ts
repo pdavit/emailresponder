@@ -1,6 +1,6 @@
 // src/lib/getUidFromRequest.ts
 import { headers } from "next/headers";
-import { adminAuth } from "./firebaseAdmin";
+import { adminAuth } from "@/lib/firebase-admin";
 
 export async function getUidFromRequest(): Promise<string> {
   const h = await headers();
