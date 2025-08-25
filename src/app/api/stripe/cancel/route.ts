@@ -1,65 +1,102 @@
-import { NextRequest, NextResponse } from "next/server";
+// src/app/api/stripe/cancel/route.ts
+import { NextResponse } from "next/server";
 import stripe from "@/lib/stripe";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type Body =
-  | { email: string }         // your current client uses email
-  | { firebaseUid: string };  // optional, if you pass uid instead
+type CancelBody = {
+  email?: string;
+  firebaseUid?: string; // preferred lookup
+};
 
-export async function POST(req: NextRequest) {
+async function findCustomerId({
+  email,
+  firebaseUid,
+}: CancelBody): Promise<string | null> {
+  // Prefer searching by metadata(firebaseUid)
+  if (firebaseUid) {
+    try {
+      // If Customers Search is enabled on your account:
+      // Docs: https://stripe.com/docs/search#search-query-language
+      const search = await (stripe.customers as any).search?.({
+        query: `metadata['firebaseUid']:'${firebaseUid}'`,
+        limit: 1,
+      });
+      if (search && search.data?.[0]?.id) return search.data[0].id;
+    } catch {
+      // fall through to manual list fallback below
+    }
+
+    // Fallback: list a page and filter by metadata in code
+    const page = await stripe.customers.list({ limit: 100 });
+    const hit = page.data.find(
+      (c: any) => c?.metadata?.firebaseUid === firebaseUid
+    );
+    if (hit?.id) return hit.id;
+  }
+
+  // Fallback: lookup by email (can return multiple in general)
+  if (email) {
+    const byEmail = await stripe.customers.list({ email, limit: 1 });
+    if (byEmail.data[0]?.id) return byEmail.data[0].id;
+  }
+
+  return null;
+}
+
+export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Partial<Body>;
+    // Parse body safely and type it
+    const { email, firebaseUid } = (await req.json().catch(() => ({}))) as CancelBody;
 
-    // Prefer firebaseUid if you send it. Fall back to email.
-    let customerId: string | null = null;
-
-    if (body.firebaseUid) {
-      // If you store firebaseUid in customer.metadata (recommended),
-      // list by customer and match in code (Stripe doesn't search metadata).
-      const list = await stripe.customers.list({ limit: 50 });
-      const match = list.data.find(
-        (c: any) => c?.metadata?.firebaseUid === body.firebaseUid
+    if (!email && !firebaseUid) {
+      return NextResponse.json(
+        { error: "Provide either firebaseUid or email." },
+        { status: 400 }
       );
-      customerId = match?.id ?? null;
-    } else if (body.email) {
-      const list = await stripe.customers.list({ email: body.email, limit: 1 });
-      customerId = list.data[0]?.id ?? null;
     }
 
+    const customerId = await findCustomerId({ email, firebaseUid });
     if (!customerId) {
-      return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Customer not found." },
+        { status: 404 }
+      );
     }
 
-    // Find an active or trialing subscription
+    // Get active subscriptions
     const subs = await stripe.subscriptions.list({
       customer: customerId,
-      status: "all",
-      limit: 10,
+      status: "active",
+      limit: 100,
     });
 
-    const sub =
-      subs.data.find(s => s.status === "active" || s.status === "trialing") ??
-      subs.data.find(s => s.status === "past_due" || s.status === "unpaid");
-
-    if (!sub) {
-      return NextResponse.json({ error: "No cancellable subscription" }, { status: 404 });
+    if (subs.data.length === 0) {
+      return NextResponse.json(
+        { error: "No active subscription found." },
+        { status: 404 }
+      );
     }
 
-    // Cancel immediately (no future renewal, no automatic refund)
-    // Newer Stripe API recommends simply calling cancel without params.
-    // If you're on an older pinned API and want to be explicit:
-    // await stripe.subscriptions.cancel(sub.id, { invoice_now: false, prorate: false });
-    const canceled = await stripe.subscriptions.cancel(sub.id);
+    // Cancel immediately. Stripe does NOT auto-refund on cancel.
+    // (No need to set proration options; refunds are a separate, explicit API.)
+    const canceledIds: string[] = [];
+    for (const s of subs.data) {
+      const canceled = await stripe.subscriptions.cancel(s.id);
+      canceledIds.push(canceled.id);
+    }
 
     return NextResponse.json({
       ok: true,
-      subscriptionId: canceled.id,
-      status: canceled.status,                 // "canceled"
-      canceledAt: canceled.canceled_at ?? null // epoch seconds
+      canceled: canceledIds,
+      note: "Canceled immediately. No refund is issued automatically.",
     });
-  } catch (err: any) {
-    console.error("Cancel now failed:", err?.message || err);
-    return NextResponse.json({ error: "Failed to cancel subscription" }, { status: 500 });
+  } catch (err) {
+    console.error("Cancel route error:", err);
+    return NextResponse.json(
+      { error: "Failed to cancel subscription." },
+      { status: 500 }
+    );
   }
 }
