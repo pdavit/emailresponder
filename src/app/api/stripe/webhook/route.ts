@@ -1,30 +1,47 @@
 // src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import type Stripe from "stripe"; // type only
-import stripe from "@/lib/stripe"; // configured server Stripe client
-
-import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import type Stripe from "stripe"; // types only
+import stripe from "@/lib/stripe";
+import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
 export const runtime = "nodejs";        // Stripe SDK needs Node
-export const dynamic = "force-dynamic"; // no caching for webhooks
+export const dynamic = "force-dynamic"; // do not cache
+export const revalidate = 0;
+// export const maxDuration = 10; // (optional) cap execution time on Vercel
 
-// --- Health check (Stripe may ping, and useful for uptime) ---
+// --- Health check ---
 export async function GET() {
   return NextResponse.json({ ok: true });
 }
 
-/* ------------------------- Firestore helpers ------------------------- */
+/* ---------------------- Firestore helpers ---------------------- */
 
 function billingDoc(uid: string) {
-  // You can change the path shape if you prefer.
   return adminDb.collection("users").doc(uid);
+}
+
+// Simple idempotency guard: will be true if this event was already processed
+async function isDuplicate(eventId: string): Promise<boolean> {
+  const ref = adminDb.collection("_stripe_events").doc(eventId);
+  try {
+    await ref.create({ receivedAt: FieldValue.serverTimestamp() });
+    return false; // created -> not duplicate
+  } catch (e: any) {
+    // Firestore ALREADY_EXISTS
+    if (e?.code === 6 || /already exists/i.test(String(e?.message))) return true;
+    throw e;
+  }
+}
+
+async function getUidFromCustomer(customerId: string): Promise<string> {
+  const customer = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
+  return (customer?.metadata as any)?.firebaseUid || "";
 }
 
 async function linkCustomerToUser(opts: { firebaseUid: string; customerId: string }) {
   const { firebaseUid, customerId } = opts;
 
-  // Persist on your user doc for later reads
   await billingDoc(firebaseUid).set(
     {
       billing: {
@@ -32,21 +49,20 @@ async function linkCustomerToUser(opts: { firebaseUid: string; customerId: strin
         updatedAt: FieldValue.serverTimestamp(),
       },
     },
-    { merge: true },
+    { merge: true }
   );
 
-  // Ensure future Stripe events can be mapped back to this user without DB lookups
+  // Ensure future events always map back to this user
   try {
     await stripe.customers.update(customerId, {
       metadata: { firebaseUid },
     });
   } catch {
-    // Non-fatal
+    /* non-fatal */
   }
 }
 
-function getPeriodEnd(sub: any): number | null {
-  // Defensively support both shapes that appear in different TS versions
+function getPeriodEnd(sub: Stripe.Subscription | any): number | null {
   return sub?.current_period_end ?? sub?.currentPeriodEnd ?? null;
 }
 
@@ -54,11 +70,10 @@ async function setSubscriptionStatus(opts: {
   firebaseUid: string;
   subscriptionId: string;
   priceId: string | null;
-  status: string;
+  status: Stripe.Subscription.Status | string;
   currentPeriodEnd: number | null;
 }) {
   const { firebaseUid, subscriptionId, priceId, status, currentPeriodEnd } = opts;
-
   const active = status === "trialing" || status === "active";
 
   await billingDoc(firebaseUid).set(
@@ -72,11 +87,11 @@ async function setSubscriptionStatus(opts: {
         updatedAt: FieldValue.serverTimestamp(),
       },
     },
-    { merge: true },
+    { merge: true }
   );
 }
 
-/* ---------------------------- Main handler --------------------------- */
+/* --------------------------- Main handler --------------------------- */
 
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature") ?? "";
@@ -88,37 +103,43 @@ export async function POST(req: NextRequest) {
 
   let event: Stripe.Event;
 
-  // Stripe requires the *raw* body for signature verification
+  // Stripe requires the *raw* body
   try {
     const rawBody = await req.text();
     event = stripe.webhooks.constructEvent(rawBody, sig, secret);
   } catch (err: any) {
-    console.error("Webhook signature verification failed:", err?.message);
+    console.error("❌ Webhook signature verification failed:", err?.message);
     return new NextResponse("Invalid signature", { status: 400 });
+  }
+
+  // Idempotency: ignore retries if we've handled this exact event.id
+  try {
+    const dup = await isDuplicate(event.id);
+    if (dup) return NextResponse.json({ received: true, deduped: true });
+  } catch (e) {
+    console.warn("⚠️ Dedupe check failed, proceeding anyway:", e);
   }
 
   try {
     switch (event.type) {
-      /* ----- User completes Checkout ----- */
+      /* ------------------ User completes Checkout ------------------ */
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
 
-        // Prefer metadata, fall back to client_reference_id if you set it
         const firebaseUid =
           (session.metadata as any)?.firebaseUid ||
           (session.client_reference_id as string) ||
           "";
 
         const customerId = (session.customer as string) ?? "";
-        const subscriptionId = (session.subscription as string) ?? "";
-
         if (firebaseUid && customerId) {
           await linkCustomerToUser({ firebaseUid, customerId });
         }
 
+        const subscriptionId = (session.subscription as string) || "";
         if (firebaseUid && subscriptionId) {
           const sub = (await stripe.subscriptions.retrieve(
-            subscriptionId,
+            subscriptionId
           )) as Stripe.Subscription;
 
           const priceId = sub.items?.data?.[0]?.price?.id ?? null;
@@ -134,20 +155,16 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      /* ----- Subscription lifecycle changes ----- */
+      /* ---------------- Subscription lifecycle changes -------------- */
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
         const customerId = sub.customer as string;
 
-        // Map back to your user via customer metadata.firebaseUid
-        const customer = await stripe.customers.retrieve(customerId);
-        const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
-
+        const firebaseUid = await getUidFromCustomer(customerId);
         if (firebaseUid) {
           const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-
           await setSubscriptionStatus({
             firebaseUid,
             subscriptionId: sub.id,
@@ -159,15 +176,17 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      /* ----- Payment failed (often moves sub to past_due) ----- */
+      /* ---------------------- Payment failed ------------------------ */
       case "invoice.payment_failed": {
         const invoice = event.data.object as Stripe.Invoice;
 
         const customerId = (invoice.customer as string) ?? null;
-        const subId: string | null = (invoice as any)?.subscription ?? null;
+        const subId =
+          typeof invoice.subscription === "string"
+            ? (invoice.subscription as string)
+            : (invoice.subscription as Stripe.Subscription | null)?.id ?? null;
 
         let sub: Stripe.Subscription | null = null;
-
         if (subId) {
           sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
         } else if (customerId) {
@@ -180,16 +199,14 @@ export async function POST(req: NextRequest) {
         }
 
         if (sub && customerId) {
-          const customer = await stripe.customers.retrieve(customerId);
-          const firebaseUid = (customer as any)?.metadata?.firebaseUid || "";
+          const firebaseUid = await getUidFromCustomer(customerId);
           const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-
           if (firebaseUid) {
             await setSubscriptionStatus({
               firebaseUid,
               subscriptionId: sub.id,
               priceId,
-              status: sub.status, // often 'past_due' here
+              status: sub.status, // often "past_due"
               currentPeriodEnd: getPeriodEnd(sub),
             });
           }
@@ -197,15 +214,11 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      // Optional: handle async payment results, etc.
-      case "checkout.session.async_payment_succeeded":
-      case "checkout.session.async_payment_failed":
+      // Optionally handle more events (trial_will_end, async_payment_*), else ignore
       default:
-        // no-op for other events you don't care about
         break;
     }
 
-    // 200 tells Stripe we processed successfully
     return NextResponse.json({ received: true });
   } catch (err) {
     console.error("Webhook handler error:", err);
