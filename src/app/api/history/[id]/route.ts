@@ -6,18 +6,19 @@ import { and, eq } from "drizzle-orm";
 
 export const runtime = "nodejs";
 
-type RouteContext = { params: { id: string } };
-
-export async function DELETE(req: NextRequest, { params }: RouteContext) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
-    // temporary user identification via query param
+    // temporary user identification via query param (until we wire Firebase Admin)
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get("userId");
     if (!userId) {
       return NextResponse.json({ error: "User ID required" }, { status: 400 });
     }
 
-    const idStr = params.id; // <-- no await
+    const idStr = params.id;
     const numericId = Number(idStr);
     if (!Number.isFinite(numericId) || numericId <= 0) {
       return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
