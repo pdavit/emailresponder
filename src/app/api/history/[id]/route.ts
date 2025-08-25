@@ -6,19 +6,22 @@ import { and, eq } from "drizzle-orm";
 
 export const runtime = "nodejs";
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(req: Request) {
   try {
-    // TEMP auth — read userId from query string until Firebase Admin is wired in
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
+    const url = new URL(req.url);
+
+    // TEMP auth — until Firebase Admin auth is wired in
+    const userId = url.searchParams.get("userId");
     if (!userId) {
       return NextResponse.json({ error: "User ID required" }, { status: 400 });
     }
 
-    const numericId = Number(params.id);
+    // Extract the [id] from the path instead of using the context arg
+    // e.g. /api/history/123  -> "123"
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const idStr = pathParts[pathParts.length - 1] ?? "";
+    const numericId = Number(idStr);
+
     if (!Number.isFinite(numericId) || numericId <= 0) {
       return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
     }
