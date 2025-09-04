@@ -152,10 +152,10 @@ async function generateReplyFromEmail(args: {
 
 function sanitizeEmailBody(input: string): string {
   return (input || "")
-    .replace(/^[>].*$/gm, "")
-    .replace(/On .*wrote:([\s\S]*)$/i, "")
-    .replace(/From:.*\nSent:.*\nTo:.*\nSubject:.*\n/gi, "")
-    .replace(/--\s*\n.*$/s, "")
+    .replace(/^[>].*$/gm, "")                       // quoted lines starting with >
+    .replace(/On .*wrote:([\s\S]*)$/i, "")          // "On Mon..., X wrote:" block
+    .replace(/From:.*\nSent:.*\nTo:.*\nSubject:.*\n/gi, "") // header blocks
+    .replace(/--\s*\n[\s\S]*$/ , "")                // signature delimiter (no /s flag)
     .replace(/\r\n/g, "\n")
     .trim()
     .slice(0, 10000);
