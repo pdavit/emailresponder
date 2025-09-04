@@ -30,3 +30,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "stripe_connection_failed" }, { status: 500 });
   }
 }
+

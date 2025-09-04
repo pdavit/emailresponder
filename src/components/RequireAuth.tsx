@@ -19,3 +19,4 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
   if (loading) return null; // or a spinner
   return <>{children}</>;
 }
+
