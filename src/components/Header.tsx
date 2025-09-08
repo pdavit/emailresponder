@@ -53,8 +53,8 @@ export function Header() {
         </span>
       </div>
     
-      <div>
-        <a
+      <div className="flex items-center gap-6">
+  <a
     href="https://skyntco.com/legal/privacy"
     target="_blank"
     rel="noopener noreferrer"
@@ -62,26 +62,27 @@ export function Header() {
   >
     Privacy Policy
   </a>
-        {isSignedIn ? (
-          <div className="bg-gradient-to-r from-blue-500 to-teal-400 p-[2px] rounded-full">
-            <div className="bg-white dark:bg-gray-950 rounded-full p-1 shadow-md">
-              <button
-                onClick={handleSignOut}
-                className="px-3 py-1 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white font-medium transition-colors"
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-        ) : (
-          <a
-            href="/sign-in"
-            className="px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
-          >
-            Sign In
-          </a>
-        )}
+
+  {isSignedIn ? (
+    <div className="bg-gradient-to-r from-blue-500 to-teal-400 p-[2px] rounded-full">
+      <div className="bg-white dark:bg-gray-950 rounded-full p-1 shadow-md">
+        <button
+          onClick={handleSignOut}
+          className="px-3 py-1 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white font-medium transition-colors"
+        >
+          Sign out
+        </button>
       </div>
+    </div>
+  ) : (
+    <a
+      href="/sign-in"
+      className="px-4 py-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
+    >
+      Sign in
+    </a>
+  )}
+</div>
     </header>
   );
 }
