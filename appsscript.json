@@ -1,29 +1,45 @@
 {
   "timeZone": "America/New_York",
-  "dependencies": {},
   "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+
+  "oauthScopes": [
+  "https://www.googleapis.com/auth/gmail.addons.execute",
+  "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+  "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+  "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
+  "https://www.googleapis.com/auth/script.external_request",
+  "https://www.googleapis.com/auth/script.locale",
+  "https://www.googleapis.com/auth/userinfo.email"
+],
+
+  "urlFetchWhitelist": [
+    "https://app.skyntco.com/api/emailresponder/generate",
+    "https://app.skyntco.com/*",
+    "https://skyntco.com/*"
+  ],
+
   "addOns": {
     "common": {
       "name": "EmailResponder — AI Reply",
-      "logoUrl": "https://skyntco.com/icon-128.png",
-      "layoutProperties": { "primaryColor": "#0EA5E9", "secondaryColor": "#111827" },
+      "logoUrl": "https://app.skyntco.com/er-icon-128.png?v=1",
+      "layoutProperties": {
+        "primaryColor": "#0EA5E9",
+        "secondaryColor": "#111827"
+      },
       "useLocaleFromApp": true,
       "homepageTrigger": { "runFunction": "onHomepageOpen" }
     },
     "gmail": {
       "contextualTriggers": [
-        {
-          "unconditional": {},
-          "onTriggerFunction": "onGmailMessageOpen"
-        }
+        { "unconditional": {}, "onTriggerFunction": "onGmailMessageOpen" }
       ],
-      "composeTrigger": { "draftAccess": "NONE", "onTriggerFunction": "onGmailComposeOpen" }
+      "composeTrigger": {
+        "draftAccess": "METADATA",
+        "selectActions": [
+          { "text": "Open EmailResponder", "runFunction": "onGmailComposeOpen" }
+        ]
+      }
     }
-  },
-  "oauthScopes": [
-    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
-    "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
-    "https://www.googleapis.com/auth/gmail.addons.current.action.compose",
-    "openid", "email", "profile"
-  ]
+  }
 }

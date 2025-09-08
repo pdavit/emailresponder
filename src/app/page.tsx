@@ -135,10 +135,30 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className="container mx-auto px-4 py-8 border-t border-gray-200 dark:border-gray-700">
-        <div className="text-center text-gray-600 dark:text-gray-400">
-          <p>&copy; 2024 EmailResponder. All rights reserved.</p>
-        </div>
-      </footer>
+  <div className="text-center text-gray-600 dark:text-gray-400 space-y-2">
+    <div className="space-x-4">
+      <a
+        href="https://skyntco.com/legal/privacy"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hover:underline"
+      >
+        Privacy Policy
+      </a>
+      <span>|</span>
+      <a
+        href="https://skyntco.com/legal/terms"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hover:underline"
+      >
+        Terms of Service
+      </a>
+    </div>
+    <p>&copy; 2024 EmailResponder. All rights reserved.</p>
+  </div>
+</footer>
+
     </main>
   );
 }
