@@ -52,16 +52,17 @@ export function Header() {
           EmailResponder
         </span>
       </div>
-      <nav class="site-nav">
-<a
-  href="https://skyntco.com/legal/privacy"
-  target="_blank"
-  rel="noopener noreferrer"
-  className="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
->
-  Privacy Policy
-</a>
+     <nav className="site-nav">
+  <a
+    href="https://skyntco.com/legal/privacy"
+    target="_blank"
+    rel="noopener noreferrer"
+    className="text-sm hover:underline"
+  >
+    Privacy Policy
+  </a>
 </nav>
+
       <div>
         {isSignedIn ? (
           <div className="bg-gradient-to-r from-blue-500 to-teal-400 p-[2px] rounded-full">
