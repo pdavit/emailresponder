@@ -27,13 +27,9 @@ export default function HomePage() {
     }
   };
 
-  const handleTryDemo = () => {
-    if (isSignedIn) {
-      router.push('/emailresponder');
-    } else {
-      router.push('/sign-in');
-    }
-  };
+ const handleTryDemo = () => {
+  router.push("/emailresponder-demo");
+};
 
   if (loading) {
     return (
