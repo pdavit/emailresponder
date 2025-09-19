@@ -1,26 +1,25 @@
 // src/lib/subscription.ts
 import Stripe from "stripe";
 
+// reuse the same file; just append this
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-// Consider these states as "has access"
-const VALID_STATUSES = new Set(["trialing", "active"]);
 
-export async function isStripeActive(email: string): Promise<boolean> {
-  // 1) Find (or infer) a Stripe customer by email
-  const customers = await stripe.customers.list({ email, limit: 1 });
-  const customer = customers.data[0];
-  if (!customer) return false;
+export async function isStripeActive(emailRaw: string): Promise<boolean> {
+  const email = (emailRaw || "").trim().toLowerCase();
+  if (!email) return false;
 
-  // 2) Get the latest subscription for that customer
-  const subs = await stripe.subscriptions.list({
-    customer: customer.id,
-    status: "all",
-    limit: 1,
-    expand: ["data.latest_invoice.payment_intent"],
-  });
-  const sub = subs.data[0];
-  if (!sub) return false;
+  // There could be multiple customers with the same email.
+  const customers = await stripe.customers.list({ email, limit: 10 });
 
-  // 3) Allow while trialing or active (optionally include past_due if you want)
-  return VALID_STATUSES.has(sub.status);
+  for (const c of customers.data) {
+    const subs = await stripe.subscriptions.list({
+      customer: c.id,
+      status: "all",
+      limit: 10,
+    });
+    for (const s of subs.data) {
+      if (s.status === "trialing" || s.status === "active") return true;
+    }
+  }
+  return false;
 }
