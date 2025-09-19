@@ -3,9 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import crypto from "crypto";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2025-06-30.basil",
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 function verify(email: string, ts: string, sig: string) {
   const age = Math.floor(Date.now() / 1000) - parseInt(ts, 10);
