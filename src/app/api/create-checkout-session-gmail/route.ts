@@ -3,21 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import crypto from "crypto";
 
-/** Edge/runtime flags (fewer surprises for webhooks/Stripe calls). */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-/* ----------------------------- HMAC verification ---------------------------- */
+/* -------------------------- Signed link verification -------------------------- */
 
-function verify(email: string, ts: string, sig: string): boolean {
-  // ts sanity
-  const tsNum = Number.parseInt(ts, 10);
+function hmacOk(email: string, ts: string, sigHex: string): boolean {
+  const tsNum = Number(ts);
   if (!Number.isFinite(tsNum)) return false;
 
-  // 5-minute freshness window
-  const age = Math.floor(Date.now() / 1000) - tsNum;
-  if (age < 0 || age > 300) return false;
+  // Reject links older than 5 minutes (and future timestamps)
+  const ageSec = Math.floor(Date.now() / 1000) - tsNum;
+  if (ageSec < 0 || ageSec > 300) return false;
 
   const secret = (process.env.ER_SHARED_SECRET ?? "").trim();
   if (!secret) return false;
@@ -27,16 +24,15 @@ function verify(email: string, ts: string, sig: string): boolean {
     .update(`${email}|${ts}`)
     .digest("hex");
 
-  // Constant-time, equal-length comparison on bytes
+  // Compare constant-time, equal-length, as bytes
   let a: Buffer, b: Buffer;
   try {
     a = Buffer.from(expectedHex, "hex");
-    b = Buffer.from(sig, "hex");
+    b = Buffer.from(sigHex, "hex");
   } catch {
     return false;
   }
   if (a.length !== b.length) return false;
-
   try {
     return crypto.timingSafeEqual(a, b);
   } catch {
@@ -44,85 +40,77 @@ function verify(email: string, ts: string, sig: string): boolean {
   }
 }
 
-/* --------------------------------- Handler --------------------------------- */
+/* ----------------------------------- GET ----------------------------------- */
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const email = searchParams.get("email") || "";
-    const ts    = searchParams.get("ts")    || "";
-    const sig   = searchParams.get("sig")   || "";
+    const email = (searchParams.get("email") || "").trim();
+    const ts = (searchParams.get("ts") || "").trim();
+    const sig = (searchParams.get("sig") || "").trim();
 
-    if (!email || !ts || !sig || !verify(email, ts, sig)) {
+    if (!email || !ts || !sig || !hmacOk(email, ts, sig)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Strong env validation with helpful details for logs
-    const required = ["STRIPE_SECRET_KEY", "STRIPE_PRICE_ID", "APP_ORIGIN"];
-    const missing = required.filter(
-      (k) => !process.env[k] || String(process.env[k]).trim() === ""
-    );
+    // Validate required configuration
+    const env = {
+      sk: (process.env.STRIPE_SECRET_KEY ?? "").trim(),
+      priceId: (process.env.STRIPE_PRICE_ID ?? "").trim(),
+      origin: (process.env.APP_ORIGIN ?? "").trim(),
+    };
+    const missing = Object.entries(env)
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
     if (missing.length) {
-      console.error("Missing envs:", missing);
       return NextResponse.json(
-        { error: "Server not configured" },
+        { error: "Server not configured", missing },
         { status: 500 }
       );
     }
 
-    const sk       = (process.env.STRIPE_SECRET_KEY ?? "").trim();
-    const priceId  = (process.env.STRIPE_PRICE_ID   ?? "").trim();
-    const origin   = (process.env.APP_ORIGIN        ?? "").trim();
+    const trialDaysRaw = (process.env.STRIPE_TRIAL_DAYS ?? "7").trim();
+    const trialDays = Number(trialDaysRaw);
+    const includeTrial =
+      Number.isFinite(trialDays) && trialDays > 0 ? trialDays : undefined;
 
-    const stripe = new Stripe(sk /* use library default apiVersion */);
+    const stripe = new Stripe(env.sk /* use library default apiVersion */);
 
-    // Reuse existing customer by email (if any); otherwise create a new one
+    // Reuse existing customer for this email; otherwise create one
     let customerId: string | undefined;
     const existing = await stripe.customers.list({ email, limit: 1 });
     if (existing.data.length) {
       customerId = existing.data[0].id;
     } else {
-      const c = await stripe.customers.create({
+      const created = await stripe.customers.create({
         email,
-        metadata: { gmailEmail: email }, // helps your webhook map back to Gmail flows
+        metadata: { gmailEmail: email },
       });
-      customerId = c.id;
+      customerId = created.id;
     }
 
-    // Build success/cancel URLs
-    const successUrl =
-      `${origin}/thank-you?` +
-      `redirect=${encodeURIComponent("/emailresponder")}` +
-      `&session_id={CHECKOUT_SESSION_ID}`;
-
-    const cancelUrl  = `${origin}/emailresponder?checkout=cancelled`;
-
-    // Create subscription checkout session
+    // Create subscription checkout (no customer_creation — that’s for "payment" mode only)
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [{ price: env.priceId, quantity: 1 }],
       allow_promotion_codes: true,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
 
-      // track this as a Gmail-initiated flow
+      ...(includeTrial
+        ? { subscription_data: { trial_period_days: includeTrial } }
+        : {}),
+
+      success_url: `${env.origin}/thank-you?redirect=${encodeURIComponent(
+        "/emailresponder"
+      )}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${env.origin}/emailresponder?checkout=cancelled`,
+
       client_reference_id: `gmail:${email}`,
       metadata: { gmailEmail: email },
     });
 
-    if (!session.url) {
-      console.error("Stripe session created without URL", session.id);
-      return NextResponse.json(
-        { error: "Checkout session unavailable" },
-        { status: 500 }
-      );
-    }
-
-    // 303 = "See Other" (explicit redirect after a non-GET action is also safe here)
-    return NextResponse.redirect(session.url, { status: 303 });
+    return NextResponse.redirect(session.url!, { status: 303 });
   } catch (err: any) {
-    console.error("create-checkout-session-gmail error:", err);
     return NextResponse.json(
       { error: "Internal error", details: err?.message ?? String(err) },
       { status: 500 }
