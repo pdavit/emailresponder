@@ -4,9 +4,7 @@ import Stripe from "stripe";
 import crypto from "crypto";
 import { isStripeActive } from "@/lib/subscription";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 // HMAC verification (email|ts) using ER_SHARED_SECRET from Apps Script & server
 function verify(email: string, ts: string, sig: string) {
