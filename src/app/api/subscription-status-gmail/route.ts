@@ -1,3 +1,4 @@
+// src/app/api/subscription-status-gmail/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import crypto from "crypto";
@@ -6,7 +7,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function bad(msg: string, status = 400) {
+/* ------------------------------ Small helpers ------------------------------ */
+
+function jsonError(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
@@ -14,91 +17,122 @@ function verifyHmac(email: string, ts: string, sig: string, secret: string) {
   const tsNum = parseInt(ts, 10);
   if (!Number.isFinite(tsNum)) return false;
   const age = Math.floor(Date.now() / 1000) - tsNum;
-  if (age < 0 || age > 300) return false; // 5 min
+  if (age < 0 || age > 300) return false; // 5 minutes
 
-  const expectedHex = crypto.createHmac("sha256", secret)
-    .update(`${email}|${ts}`)
-    .digest("hex");
-
+  const expected = crypto.createHmac("sha256", secret).update(`${email}|${ts}`).digest("hex");
   try {
-    const a = Buffer.from(expectedHex, "hex");
+    const a = Buffer.from(expected, "hex");
     const b = Buffer.from(sig, "hex");
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
 
-async function findCustomerByEmail(stripe: Stripe, email: string) {
-  // 1) quick list by email
-  const list = await stripe.customers.list({ email, limit: 3 });
-  if (list.data.length) return list.data[0];
+// TS-safe normalization for period end (Stripe typings differ by version)
+function getPeriodEnd(sub: Stripe.Subscription): number | null {
+  const s: any = sub as any;
+  const v =
+    s.current_period_end ??
+    s.currentPeriodEnd ??
+    s.trial_end ??
+    s.trialEnd ??
+    null;
 
-  // 2) robust search (also checks metadata.gmailEmail)
+  if (!v) return null;
+  return typeof v === "number" ? v : Math.floor(new Date(v).getTime() / 1000);
+}
+
+// Gather (unique) customers for an email via list + (optional) search
+async function findCustomersByEmail(stripe: Stripe, email: string): Promise<Stripe.Customer[]> {
+  const out: Record<string, Stripe.Customer> = {};
+
+  const listed = await stripe.customers.list({ email, limit: 100 });
+  for (const c of listed.data) out[c.id] = c;
+
+  // Search may not be enabled in all accounts; ignore failures
   try {
-    const qry = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
-    const search = await stripe.customers.search({ query: qry, limit: 3 });
-    if (search.data.length) return search.data[0];
-  } catch { /* not all accounts have search enabled */ }
+    const query = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
+    const found = await stripe.customers.search({ query, limit: 100 });
+    for (const c of found.data) out[c.id] = c;
+  } catch { /* noop */ }
 
-  return null;
+  return Object.values(out);
+}
+
+/* -------------------------------- Handlers -------------------------------- */
+
+export async function GET() {
+  return NextResponse.json({ ok: true });
 }
 
 export async function POST(req: NextRequest) {
   const stripeKey = (process.env.STRIPE_SECRET_KEY || "").trim();
-  const secret    = (process.env.ER_SHARED_SECRET || "").trim();
-  if (!stripeKey || !secret) return bad("Server not configured", 500);
+  const secret = (process.env.ER_SHARED_SECRET || "").trim();
+  if (!stripeKey || !secret) return jsonError("Server not configured", 500);
 
   let body: { email?: string; ts?: string; sig?: string } = {};
   try {
     body = await req.json();
   } catch {
-    return bad("Invalid JSON");
+    return jsonError("Invalid JSON");
   }
 
-  const emailRaw = (body.email || "").toString().trim();
-  const email = emailRaw.toLowerCase();
-  const ts  = (body.ts || "").toString();
+  const email = (body.email || "").toString().trim().toLowerCase();
+  const ts = (body.ts || "").toString();
   const sig = (body.sig || "").toString();
 
-  if (!email || !ts || !sig) return bad("Missing fields");
-  if (!verifyHmac(email, ts, sig, secret)) return bad("Bad signature", 401);
+  if (!email || !ts || !sig) return jsonError("Missing fields");
+  if (!verifyHmac(email, ts, sig, secret)) return jsonError("Bad signature", 401);
 
   const stripe = new Stripe(stripeKey);
 
-  // Find the customer
-  const customer = await findCustomerByEmail(stripe, email);
-  if (!customer) {
-    return NextResponse.json({ active: false, reason: "no_customer" });
+  // find ALL customers matching this email/metadata
+  const customers = await findCustomersByEmail(stripe, email);
+  if (!customers.length) {
+    return NextResponse.json({ active: false, reason: "no_customer", statuses: [] });
   }
 
-  // Check subscriptions
-  const subs = await stripe.subscriptions.list({
-    customer: customer.id,
-    status: "all",
-    limit: 10,
-    expand: ["data.latest_invoice.payment_intent"]
-  });
+  // Collect subscriptions across all matching customers
+  const statuses: Array<{
+    id: string;
+    status: Stripe.Subscription.Status | string;
+    current_period_end: number | null;
+    cancel_at_period_end: boolean;
+    customerId: string;
+  }> = [];
 
-  const useful = subs.data.map(s => ({
-    id: s.id,
-    status: s.status,
-    current_period_end: s.current_period_end,
-    cancel_at_period_end: (s as any).cancel_at_period_end ?? false,
-  }));
+  for (const cust of customers) {
+    const subs = await stripe.subscriptions.list({
+      customer: cust.id,
+      status: "all",
+      limit: 100,
+    });
 
-  // treat trialing, active, and (optionally) past_due as “active enough”
-  const ACTIVE_STATUSES = new Set<Stripe.Subscription.Status | string>([
+    for (const s of subs.data) {
+      statuses.push({
+        id: s.id,
+        status: s.status,
+        current_period_end: getPeriodEnd(s),
+        // Some Stripe TS versions hide this field; coerce to boolean safely
+        cancel_at_period_end: !!(s as any).cancel_at_period_end,
+        customerId: cust.id,
+      });
+    }
+  }
+
+  // treat these as "active enough" for Gmail usage
+  const ACTIVE = new Set<Stripe.Subscription.Status | string>([
     "trialing",
     "active",
+    // include past_due so users aren't blocked if a payment is retrying
     "past_due",
   ]);
 
-  const hasActive = useful.some(s => ACTIVE_STATUSES.has(s.status));
+  const hasActive = statuses.some((s) => ACTIVE.has(s.status));
 
   return NextResponse.json({
     active: hasActive,
-    statuses: useful, // handy for troubleshooting; remove later if you want
+    statuses, // keep while debugging; remove later if you want
   });
 }
