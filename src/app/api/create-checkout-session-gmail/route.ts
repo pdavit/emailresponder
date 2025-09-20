@@ -3,24 +3,19 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import crypto from "crypto";
 
-export const runtime = "nodejs"; // Stripe requires Node, not Edge
-
-/* ------------------------------ Helpers ------------------------------ */
+export const runtime = "nodejs";
 
 function env(name: string): string {
-  // Trim to avoid "Invalid character in header content [Authorization]" from stray spaces
   return (process.env[name] ?? "").trim();
 }
 
 function verify(email: string, ts: string, sig: string): boolean {
-  // Allow 5 minutes
   const age = Math.floor(Date.now() / 1000) - parseInt(ts, 10);
   if (!ts || !sig || isNaN(Number(ts)) || age > 300 || age < -60) return false;
 
   const h = crypto.createHmac("sha256", env("ER_SHARED_SECRET"));
   h.update(`${email}|${ts}`);
   const expected = h.digest("hex");
-
   try {
     return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
   } catch {
@@ -28,13 +23,7 @@ function verify(email: string, ts: string, sig: string): boolean {
   }
 }
 
-/* ------------------------------ Stripe ------------------------------- */
-
-// Do NOT pin apiVersion here; using library default avoids type drift during upgrades.
-const stripeSecret = env("STRIPE_SECRET_KEY");
-const stripe = new Stripe(stripeSecret);
-
-/* --------------------------------- GET -------------------------------- */
+const stripe = new Stripe(env("STRIPE_SECRET_KEY"));
 
 export async function GET(req: NextRequest) {
   try {
@@ -53,26 +42,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Server misconfigured" }, { status: 500 });
     }
 
-    const origin =
-      env("NEXT_PUBLIC_APP_ORIGIN") ||
-      `${url.protocol}//${url.host}`; // fallback to current origin
-
+    const origin = env("NEXT_PUBLIC_APP_ORIGIN") || `${url.protocol}//${url.host}`;
     const successUrl =
       `${origin}/thank-you?redirect=${encodeURIComponent("/emailresponder")}` +
       `&session_id={CHECKOUT_SESSION_ID}&email=${encodeURIComponent(email)}`;
     const cancelUrl = `${origin}/thank-you?redirect=${encodeURIComponent("/emailresponder")}`;
 
-    // Reuse an existing customer if we can find one by email
+    // Try to reuse an existing customer by email
     let customerId: string | undefined;
     try {
       const existing = await stripe.customers.list({ email, limit: 1 });
       if (existing.data[0]) customerId = existing.data[0].id;
     } catch (e) {
-      // Non-fatal; we can still create the session with customer_creation
       console.warn("customers.list failed; continuing without explicit customer:", e);
     }
 
-    // Build session params
     const params: Stripe.Checkout.SessionCreateParams = {
       mode: "subscription",
       success_url: successUrl,
@@ -80,7 +64,7 @@ export async function GET(req: NextRequest) {
       allow_promotion_codes: true,
       line_items: [{ price: priceId, quantity: 1 }],
       subscription_data: {
-        trial_period_days: 7,
+        trial_period_days: 7, // or omit if your Price already defines a trial
         metadata: { app: "emailresponder", email },
       },
     };
@@ -88,7 +72,7 @@ export async function GET(req: NextRequest) {
     if (customerId) {
       params.customer = customerId;
     } else {
-      params.customer_creation = "always";
+      // For subscriptions, use customer_email (Stripe will create the Customer at completion)
       params.customer_email = email;
     }
 
@@ -99,18 +83,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Could not start checkout" }, { status: 500 });
     }
 
-    // 303 redirect so Gmail opens Stripe Checkout directly
     return NextResponse.redirect(session.url, {
       status: 303,
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err: any) {
-    // Log full error for Vercel logs; return safe message to client
     console.error("create-checkout-session-gmail error:", err);
-    const message =
-      err && err.message ? err.message : "Internal error";
     return NextResponse.json(
-      { error: "Internal error", details: message },
+      { error: "Internal error", details: err?.message ?? "Unknown" },
       { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
