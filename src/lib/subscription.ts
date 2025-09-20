@@ -1,32 +1,65 @@
 // src/lib/subscription.ts
 import Stripe from "stripe";
+import { db } from "@/lib/firestore";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  // no apiVersion here so Vercel uses the account default
+});
 
-const ACTIVE_STATUSES = new Set<Stripe.Subscription.Status>([
-  "trialing",
-  "active",
-  "past_due",   // optional: counts as active for gating
-  "unpaid",     // optional: counts as active for gating
-]);
+const CACHE_COLL = "gmailSubs"; // doc id = lowercased email
 
+/**
+ * Return true if the email has an active or trialing Stripe subscription.
+ * 1) Check Firestore cache (gmailSubs/{email})
+ * 2) Fallback: look up customers by email in Stripe and scan subscriptions
+ * 3) Write back a small cache doc for next time
+ */
 export async function isStripeActive(email: string): Promise<boolean> {
-  const addr = (email || "").trim().toLowerCase();
-  if (!addr) return false;
+  const key = email.trim().toLowerCase();
+  const docRef = db.collection(CACHE_COLL).doc(key);
 
-  // Stripe can hold multiple customers for the same email; check them all.
-  const customers = await stripe.customers.list({ email: addr, limit: 10 });
-  if (!customers.data.length) return false;
+  // 1) Firestore cache first
+  const snap = await docRef.get();
+  if (snap.exists) {
+    const sub = (snap.data()?.subscription ?? {}) as {
+      status?: string;
+      currentPeriodEnd?: number | null;
+    };
+    if (sub.status === "active" || sub.status === "trialing") {
+      // optional freshness check
+      if (!sub.currentPeriodEnd || sub.currentPeriodEnd * 1000 > Date.now() - 60_000) {
+        return true;
+      }
+    }
+  }
+
+  // 2) Stripe lookup
+  const customers = await stripe.customers.list({ email, limit: 10 });
+  let activeSub: Stripe.Subscription | null = null;
 
   for (const c of customers.data) {
     const subs = await stripe.subscriptions.list({
       customer: c.id,
-      status: "all", // include trialing, past_due, etc.
-      limit: 20,
+      status: "all",
+      limit: 10,
     });
-    if (subs.data.some((s) => ACTIVE_STATUSES.has(s.status))) {
-      return true;
-    }
+    activeSub = subs.data.find(s => s.status === "active" || s.status === "trialing") || null;
+    if (activeSub) break;
   }
-  return false;
+
+  // 3) Cache & return
+  await docRef.set(
+    {
+      subscription: {
+        id: activeSub?.id ?? null,
+        status: activeSub?.status ?? null,
+        priceId: activeSub?.items?.data?.[0]?.price?.id ?? null,
+        currentPeriodEnd: activeSub?.current_period_end ?? null,
+      },
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+
+  return !!activeSub;
 }

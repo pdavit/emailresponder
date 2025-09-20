@@ -16,21 +16,37 @@ export async function GET() {
 
 /* ---------------------------- Firestore helpers ---------------------------- */
 
-function billingDoc(uid: string) {
+function userDoc(uid: string) {
   return adminDb.collection("users").doc(uid);
 }
 
-// Idempotency guard using Firestore
+function gmailDoc(emailLower: string) {
+  return adminDb.collection("gmailSubs").doc(emailLower);
+}
+
+// Idempotency guard using Firestore (single write per event id)
 async function isDuplicate(eventId: string): Promise<boolean> {
   const ref = adminDb.collection("_stripe_events").doc(eventId);
   try {
     await ref.create({ receivedAt: FieldValue.serverTimestamp() });
     return false;
   } catch (e: any) {
-    // Firestore ALREADY_EXISTS (code 6) or similar message
     if (e?.code === 6 || /already exists/i.test(String(e?.message))) return true;
     throw e;
   }
+}
+
+/* ----------------------------- Stripe helpers ----------------------------- */
+
+function asUnix(v?: number | string | null): number | null {
+  if (!v && v !== 0) return null;
+  if (typeof v === "number") return v;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? Math.floor(t / 1000) : null;
+}
+
+function activeFromStatus(status?: Stripe.Subscription.Status | string | null): boolean {
+  return status === "active" || status === "trialing";
 }
 
 async function getUidFromCustomer(customerId: string): Promise<string> {
@@ -38,10 +54,17 @@ async function getUidFromCustomer(customerId: string): Promise<string> {
   return (customer?.metadata as any)?.firebaseUid || "";
 }
 
+async function getEmailFromCustomer(customerId: string): Promise<string | null> {
+  const customer = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
+  return (customer?.email ?? null) || null;
+}
+
+/* --------------------------- Writers (Firestore) --------------------------- */
+
 async function linkCustomerToUser(opts: { firebaseUid: string; customerId: string }) {
   const { firebaseUid, customerId } = opts;
 
-  await billingDoc(firebaseUid).set(
+  await userDoc(firebaseUid).set(
     {
       billing: {
         customerId,
@@ -51,7 +74,7 @@ async function linkCustomerToUser(opts: { firebaseUid: string; customerId: strin
     { merge: true }
   );
 
-  // Ensure future events always map back to this user
+  // Ensure future events map back to this user
   try {
     await stripe.customers.update(customerId, { metadata: { firebaseUid } });
   } catch {
@@ -59,20 +82,7 @@ async function linkCustomerToUser(opts: { firebaseUid: string; customerId: strin
   }
 }
 
-// Prefer current_period_end; fall back to trial_end. Accept number or ISO.
-function getPeriodEnd(sub: Stripe.Subscription | any): number | null {
-  const v =
-    sub?.current_period_end ??
-    sub?.currentPeriodEnd ?? // some TS shapes
-    sub?.trial_end ??
-    sub?.trialEnd ??
-    null;
-
-  if (!v) return null;
-  return typeof v === "number" ? v : Math.floor(new Date(v).getTime() / 1000);
-}
-
-async function setSubscriptionStatus(opts: {
+async function writeUserSubscription(opts: {
   firebaseUid: string;
   subscriptionId: string;
   priceId: string | null;
@@ -80,20 +90,63 @@ async function setSubscriptionStatus(opts: {
   currentPeriodEnd: number | null;
 }) {
   const { firebaseUid, subscriptionId, priceId, status, currentPeriodEnd } = opts;
-  const active = status === "trialing" || status === "active";
 
-  await billingDoc(firebaseUid).set(
+  await userDoc(firebaseUid).set(
     {
       billing: {
         subscriptionId,
         priceId,
         status,
         currentPeriodEnd,
-        active,
+        active: activeFromStatus(status),
         updatedAt: FieldValue.serverTimestamp(),
       },
     },
     { merge: true }
+  );
+}
+
+async function writeGmailSubscription(opts: {
+  email: string;
+  customerId?: string | null;
+  subscriptionId?: string | null;
+  priceId?: string | null;
+  status?: Stripe.Subscription.Status | string | null;
+  currentPeriodEnd?: number | null;
+}) {
+  const emailLower = opts.email.trim().toLowerCase();
+  if (!emailLower) return;
+
+  await gmailDoc(emailLower).set(
+    {
+      subscription: {
+        id: opts.subscriptionId ?? null,
+        status: opts.status ?? null,
+        priceId: opts.priceId ?? null,
+        currentPeriodEnd: opts.currentPeriodEnd ?? null,
+      },
+      active: activeFromStatus(opts.status ?? null),
+      customerId: opts.customerId ?? null,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+/* ------------------------ Extractors per event type ------------------------ */
+
+function firstPriceId(sub: Stripe.Subscription | null): string | null {
+  return sub?.items?.data?.[0]?.price?.id ?? null;
+}
+
+function getPeriodEnd(sub: Stripe.Subscription | any): number | null {
+  // Prefer current period end; fall back to trial end
+  return (
+    asUnix(sub?.current_period_end) ??
+    asUnix(sub?.currentPeriodEnd) ??
+    asUnix(sub?.trial_end) ??
+    asUnix(sub?.trialEnd) ??
+    null
   );
 }
 
@@ -132,29 +185,62 @@ export async function POST(req: NextRequest) {
         const session = event.data.object as Stripe.Checkout.Session;
 
         const firebaseUid =
-          (session.metadata as any)?.firebaseUid ||
-          (session.client_reference_id as string) ||
-          "";
+          ((session.metadata as any)?.firebaseUid as string) ||
+          ((session.client_reference_id as string) ?? "");
 
         const customerId = (session.customer as string) ?? "";
         if (firebaseUid && customerId) {
           await linkCustomerToUser({ firebaseUid, customerId });
         }
 
+        // Capture email for Gmail add-on path
+        const emailFromSession =
+          session.customer_details?.email ||
+          ((session.metadata as any)?.email as string | undefined) ||
+          null;
+
         const subscriptionId = (session.subscription as string) || "";
-        if (firebaseUid && subscriptionId) {
-          const sub = (await stripe.subscriptions.retrieve(
-            subscriptionId
-          )) as Stripe.Subscription;
+        let sub: Stripe.Subscription | null = null;
 
-          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+        if (subscriptionId) {
+          sub = (await stripe.subscriptions.retrieve(subscriptionId)) as Stripe.Subscription;
+        } else if (customerId) {
+          const list = await stripe.subscriptions.list({
+            customer: customerId,
+            status: "all",
+            limit: 1,
+          });
+          sub = list.data[0] ?? null;
+        }
 
-          await setSubscriptionStatus({
+        const priceId = firstPriceId(sub);
+        const status = sub?.status ?? null;
+        const cpe = sub ? getPeriodEnd(sub) : null;
+
+        // Write UID-based doc (if present)
+        if (firebaseUid && sub) {
+          await writeUserSubscription({
             firebaseUid,
             subscriptionId: sub.id,
             priceId,
             status: sub.status,
-            currentPeriodEnd: getPeriodEnd(sub),
+            currentPeriodEnd: cpe,
+          });
+        }
+
+        // Write email-based doc for Gmail add-on
+        const email =
+          emailFromSession ||
+          (customerId ? await getEmailFromCustomer(customerId) : null);
+
+        if (email) {
+          await writeGmailSubscription({
+            email,
+            customerId,
+            subscriptionId: sub?.id ?? null,
+            priceId,
+            status,
+            currentPeriodEnd: cpe,
           });
         }
         break;
@@ -167,14 +253,26 @@ export async function POST(req: NextRequest) {
         const sub = event.data.object as Stripe.Subscription;
         const customerId = sub.customer as string;
 
+        // UID path
         const firebaseUid = await getUidFromCustomer(customerId);
         if (firebaseUid) {
-          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-
-          await setSubscriptionStatus({
+          await writeUserSubscription({
             firebaseUid,
             subscriptionId: sub.id,
-            priceId,
+            priceId: firstPriceId(sub),
+            status: sub.status,
+            currentPeriodEnd: getPeriodEnd(sub),
+          });
+        }
+
+        // Gmail email cache path
+        const email = await getEmailFromCustomer(customerId);
+        if (email) {
+          await writeGmailSubscription({
+            email,
+            customerId,
+            subscriptionId: sub.id,
+            priceId: firstPriceId(sub),
             status: sub.status,
             currentPeriodEnd: getPeriodEnd(sub),
           });
@@ -202,7 +300,6 @@ export async function POST(req: NextRequest) {
         if (subId) {
           sub = (await stripe.subscriptions.retrieve(subId)) as Stripe.Subscription;
         } else if (customerId) {
-          // Fallback: most recent sub for the customer
           const list = await stripe.subscriptions.list({
             customer: customerId,
             status: "all",
@@ -211,25 +308,43 @@ export async function POST(req: NextRequest) {
           sub = list.data[0] ?? null;
         }
 
+        const priceId = firstPriceId(sub);
+        const status = sub?.status ?? "past_due";
+        const cpe = sub ? getPeriodEnd(sub) : null;
+
+        // UID path
         if (sub && customerId) {
           const firebaseUid = await getUidFromCustomer(customerId);
-          const priceId = sub.items?.data?.[0]?.price?.id ?? null;
-
           if (firebaseUid) {
-            await setSubscriptionStatus({
+            await writeUserSubscription({
               firebaseUid,
               subscriptionId: sub.id,
               priceId,
-              status: sub.status, // often "past_due"
-              currentPeriodEnd: getPeriodEnd(sub),
+              status,
+              currentPeriodEnd: cpe,
+            });
+          }
+        }
+
+        // Gmail email cache path
+        if (customerId) {
+          const email = await getEmailFromCustomer(customerId);
+          if (email) {
+            await writeGmailSubscription({
+              email,
+              customerId,
+              subscriptionId: sub?.id ?? null,
+              priceId,
+              status,
+              currentPeriodEnd: cpe,
             });
           }
         }
         break;
       }
 
-      // (Optional) handle more events like `customer.subscription.trial_will_end`, etc.
       default:
+        // other events can be ignored or logged
         break;
     }
 
