@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Optional: force a 7-day trial if your Price doesn’t define one
-    const trialDays = Number(process.env.STRIPE_TRIAL_DAYS ?? "0");
+    const trialDays = Number(process.env.STRIPE_TRIAL_DAYS ?? "7");
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
