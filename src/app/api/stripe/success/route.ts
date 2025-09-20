@@ -12,13 +12,13 @@ export async function GET(req: NextRequest) {
   const origin = (process.env.APP_ORIGIN ?? "").trim();
   const back = new URL(req.url).searchParams.get("back") || "";
 
-  // If we have a safe Gmail URL, send them back to that thread anyway.
+  // Prefer jumping straight back to the Gmail thread that started checkout.
   if (back && isSafeGmailUrl(back)) {
     return NextResponse.redirect(back, { status: 302 });
   }
 
-  // Fallback: land in the app with a “canceled” hint.
-  return NextResponse.redirect(`${origin}/emailresponder?checkout=canceled`, {
+  // Fallback: land in the app with a “success” hint.
+  return NextResponse.redirect(`${origin}/emailresponder?checkout=success`, {
     status: 302,
   });
 }
