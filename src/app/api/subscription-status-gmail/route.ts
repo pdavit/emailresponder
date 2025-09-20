@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/* ------------------------------ Small helpers ------------------------------ */
+/* ------------------------------ helpers ------------------------------ */
 
 function jsonError(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -17,7 +17,7 @@ function verifyHmac(email: string, ts: string, sig: string, secret: string) {
   const tsNum = parseInt(ts, 10);
   if (!Number.isFinite(tsNum)) return false;
   const age = Math.floor(Date.now() / 1000) - tsNum;
-  if (age < 0 || age > 300) return false; // 5 minutes
+  if (age < 0 || age > 300) return false;
 
   const expected = crypto.createHmac("sha256", secret).update(`${email}|${ts}`).digest("hex");
   try {
@@ -29,7 +29,7 @@ function verifyHmac(email: string, ts: string, sig: string, secret: string) {
   }
 }
 
-// TS-safe normalization for period end (Stripe typings differ by version)
+// TS-safe because Stripe’s types for period end vary across versions
 function getPeriodEnd(sub: Stripe.Subscription): number | null {
   const s: any = sub as any;
   const v =
@@ -43,26 +43,29 @@ function getPeriodEnd(sub: Stripe.Subscription): number | null {
   return typeof v === "number" ? v : Math.floor(new Date(v).getTime() / 1000);
 }
 
-// Gather (unique) customers for an email via list + (optional) search
 async function findCustomersByEmail(stripe: Stripe, email: string): Promise<Stripe.Customer[]> {
-  const out: Record<string, Stripe.Customer> = {};
+  const map: Record<string, Stripe.Customer> = {};
 
-  const listed = await stripe.customers.list({ email, limit: 100 });
-  for (const c of listed.data) out[c.id] = c;
+  // 1) quick path
+  const list = await stripe.customers.list({ email, limit: 100 });
+  for (const c of list.data) map[c.id] = c;
 
-  // Search may not be enabled in all accounts; ignore failures
+  // 2) robust path (may not be enabled on all accounts)
   try {
     const query = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
     const found = await stripe.customers.search({ query, limit: 100 });
-    for (const c of found.data) out[c.id] = c;
-  } catch { /* noop */ }
+    for (const c of found.data) map[c.id] = c;
+  } catch {
+    /* ignore if search disabled */
+  }
 
-  return Object.values(out);
+  return Object.values(map);
 }
 
-/* -------------------------------- Handlers -------------------------------- */
+/* -------------------------------- routes -------------------------------- */
 
 export async function GET() {
+  // simple health check
   return NextResponse.json({ ok: true });
 }
 
@@ -81,19 +84,14 @@ export async function POST(req: NextRequest) {
   const email = (body.email || "").toString().trim().toLowerCase();
   const ts = (body.ts || "").toString();
   const sig = (body.sig || "").toString();
-
   if (!email || !ts || !sig) return jsonError("Missing fields");
   if (!verifyHmac(email, ts, sig, secret)) return jsonError("Bad signature", 401);
 
   const stripe = new Stripe(stripeKey);
+  const keyMode = stripeKey.startsWith("sk_live_") ? "live" : (stripeKey.startsWith("sk_test_") ? "test" : "unknown");
 
-  // find ALL customers matching this email/metadata
   const customers = await findCustomersByEmail(stripe, email);
-  if (!customers.length) {
-    return NextResponse.json({ active: false, reason: "no_customer", statuses: [] });
-  }
 
-  // Collect subscriptions across all matching customers
   const statuses: Array<{
     id: string;
     status: Stripe.Subscription.Status | string;
@@ -108,31 +106,27 @@ export async function POST(req: NextRequest) {
       status: "all",
       limit: 100,
     });
-
     for (const s of subs.data) {
       statuses.push({
         id: s.id,
         status: s.status,
         current_period_end: getPeriodEnd(s),
-        // Some Stripe TS versions hide this field; coerce to boolean safely
         cancel_at_period_end: !!(s as any).cancel_at_period_end,
         customerId: cust.id,
       });
     }
   }
 
-  // treat these as "active enough" for Gmail usage
-  const ACTIVE = new Set<Stripe.Subscription.Status | string>([
-    "trialing",
-    "active",
-    // include past_due so users aren't blocked if a payment is retrying
-    "past_due",
-  ]);
+  // Consider these as “active enough” for Gmail usage
+  const ACTIVE = new Set<Stripe.Subscription.Status | string>(["trialing", "active", "past_due"]);
+  const active = statuses.some((s) => ACTIVE.has(s.status));
 
-  const hasActive = statuses.some((s) => ACTIVE.has(s.status));
-
+  // Helpful debug information — safe to keep while we test.
   return NextResponse.json({
-    active: hasActive,
-    statuses, // keep while debugging; remove later if you want
-  });
+    active,
+    email,
+    mode: keyMode,                  // <-- "live" or "test"
+    customerCount: customers.length,
+    statuses,                       // list of subs we saw
+  }, { headers: { "cache-control": "no-store" } });
 }
