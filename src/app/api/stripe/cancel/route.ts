@@ -1,43 +1,39 @@
+// app/api/stripe/cancel/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
-/** Convert a Gmail permalink (even print view) into the normal Gmail UI URL. */
-function toGmailUiUrl(back: string): string | null {
-  try {
-    const u = new URL(back);
-    if (u.hostname !== "mail.google.com") return null;
-
-    const authuser = u.searchParams.get("authuser") || "";
-    const threadId = u.searchParams.get("th"); // present on print/permalink links
-
-    // If the hash already points to UI (#inbox/#all), keep it.
-    if (u.hash && /#(inbox|all)\//.test(u.hash)) {
-      return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}${u.hash}`;
-    }
-
-    // Otherwise build a canonical UI URL with the thread id if we have it.
-    if (threadId) {
-      return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}#all/${threadId}`;
-    }
-
-    // Fallback: user’s inbox UI
-    return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}#inbox`;
-  } catch {
-    return null;
-  }
+function isGmail(url: string) {
+  try { return new URL(url).origin === "https://mail.google.com"; }
+  catch { return false; }
 }
 
 export async function GET(req: NextRequest) {
-  const back = new URL(req.url).searchParams.get("back") || "";
+  const url  = new URL(req.url);
+  let back   = url.searchParams.get("back") || "";
+  const u    = url.searchParams.get("u") || "";
 
-  const ui = toGmailUiUrl(back);
-  if (ui) {
-    return NextResponse.redirect(ui, { status: 302 });
+  if (back && isGmail(back)) {
+    try {
+      const parsed = new URL(back);
+      if (/^\/mail\/u\/\d+\//.test(parsed.pathname) || parsed.searchParams.get("view") === "pt") {
+        const q = parsed.search;
+        const h = parsed.hash;
+        const auth = u ? `authuser=${encodeURIComponent(u)}` : "";
+        const rebuilt = `https://mail.google.com/mail/?${auth}${auth && q ? "&" : ""}${q.replace(/^\?/, "")}${h}`;
+        return NextResponse.redirect(rebuilt, { status: 302 });
+      }
+      if (u && !parsed.searchParams.has("authuser")) {
+        parsed.searchParams.set("authuser", u);
+        back = parsed.toString();
+      }
+    } catch { /* ignore */ }
+
+    return NextResponse.redirect(back, { status: 302 });
   }
 
-  // Last resort: just land in Gmail
-  return NextResponse.redirect("https://mail.google.com/mail/", { status: 302 });
+  return new NextResponse(
+    `<!doctype html><meta charset="utf-8">
+     <title>Checkout canceled</title>
+     <p>Checkout canceled. You can close this tab and return to Gmail.</p>`,
+    { headers: { "content-type": "text/html; charset=utf-8" } }
+  );
 }

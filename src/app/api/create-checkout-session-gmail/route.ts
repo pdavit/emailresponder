@@ -1,3 +1,4 @@
+// app/api/create-checkout-session-gmail/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import crypto from "crypto";
@@ -6,22 +7,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** ---------- utils ---------- */
+/* -------------------- helpers -------------------- */
 
-function bad(msg: string, status = 400) {
+function jsonError(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-/** HMAC(email|ts) with 5-minute window */
-function verify(email: string, ts: string, sig: string): boolean {
-  const tsNum = Number(ts);
+/** Timing-safe HMAC(email|ts) check (±10 min skew). */
+function verifyHmac(email: string, ts: string, sigHex: string, secret: string) {
+  const tsNum = parseInt(ts, 10);
   if (!Number.isFinite(tsNum)) return false;
 
-  const age = Math.floor(Date.now() / 1000) - tsNum;
-  if (age < 0 || age > 300) return false;
-
-  const secret = (process.env.ER_SHARED_SECRET ?? "").trim();
-  if (!secret) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - tsNum) > 600) return false;
 
   const expectedHex = crypto.createHmac("sha256", secret)
     .update(`${email}|${ts}`)
@@ -29,37 +27,38 @@ function verify(email: string, ts: string, sig: string): boolean {
 
   try {
     const a = Buffer.from(expectedHex, "hex");
-    const b = Buffer.from(sig, "hex");
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
+    const b = Buffer.from(sigHex, "hex");
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
 
-/** allow-list Gmail “back” URL */
+/** Allow-list Gmail “back” URL. */
 function isSafeGmailUrl(url: string) {
-  return /^https:\/\/mail\.google\.com\//.test(url);
+  try {
+    return new URL(url).origin === "https://mail.google.com";
+  } catch {
+    return false;
+  }
 }
 
-/** Try hard to find a customer by email or metadata.gmailEmail */
 async function findCustomerByEmail(stripe: Stripe, email: string) {
-  // 1) Quick list
-  const list = await stripe.customers.list({ email, limit: 3 });
-  if (list.data.length) return list.data[0];
+  // 1) Fast list
+  const listed = await stripe.customers.list({ email, limit: 5 });
+  if (listed.data.length) return listed.data[0];
 
-  // 2) Search (some accounts may not have this enabled)
+  // 2) Robust search (if enabled)
   try {
-    const query = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
-    const search = await stripe.customers.search({ query, limit: 3 });
+    const q = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
+    const search = await stripe.customers.search({ query: q, limit: 5 });
     if (search.data.length) return search.data[0];
-  } catch {
-    /* ignore */
-  }
+  } catch { /* ignore */ }
+
   return null;
 }
 
-/** Return true if customer already has a usable subscription */
+/** Treat trialing/active/past_due as “usable”. */
 async function hasUsableSubscription(stripe: Stripe, customerId: string) {
   const subs = await stripe.subscriptions.list({
     customer: customerId,
@@ -70,44 +69,53 @@ async function hasUsableSubscription(stripe: Stripe, customerId: string) {
   const ACTIVE = new Set<Stripe.Subscription.Status>([
     "trialing",
     "active",
-    // include past_due if you consider it “active enough”
+    "past_due",
   ]);
 
-  return subs.data.some((s) => ACTIVE.has(s.status));
+  return subs.data.some(s => ACTIVE.has(s.status));
 }
 
-/** ---------- route ---------- */
+/* -------------------- route -------------------- */
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const url = new URL(req.url);
+    const qp = url.searchParams;
 
-    const email = (searchParams.get("email") || "").trim().toLowerCase();
-    const ts    = (searchParams.get("ts") || "").trim();
-    const sig   = (searchParams.get("sig") || "").trim();
-    const back  = (searchParams.get("back") || "").trim();
+    const email = (qp.get("email") || "").trim().toLowerCase();
+    const ts    = (qp.get("ts")    || "").trim();
+    const sig   = (qp.get("sig")   || "").trim();
+    const back  = (qp.get("back")  || "").trim();
 
-    if (!email || !ts || !sig || !verify(email, ts, sig)) {
-      return bad("Unauthorized", 401);
+    const shared = (process.env.ER_SHARED_SECRET || "").trim();
+    if (!email || !ts || !sig || !shared || !verifyHmac(email, ts, sig, shared)) {
+      return jsonError("Unauthorized", 401);
     }
 
-    // Required env
-    const required = ["STRIPE_SECRET_KEY", "STRIPE_PRICE_ID", "APP_ORIGIN"] as const;
-    const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
-    if (missing.length) return bad(`Server not configured: ${missing.join(", ")}`, 500);
+    // Env
+    const stripeKey = (process.env.STRIPE_SECRET_KEY || "").trim();
+    const priceId   = (process.env.STRIPE_PRICE_ID   || "").trim();
+    const origin    =
+      (process.env.APP_ORIGIN || process.env.NEXT_PUBLIC_APP_URL || "").trim()
+      || `${url.protocol}//${url.host}`;
 
-    const sk      = process.env.STRIPE_SECRET_KEY!.trim();
-    const priceId = process.env.STRIPE_PRICE_ID!.trim();
-    const origin  = process.env.APP_ORIGIN!.trim();
-    const stripe  = new Stripe(sk);
+    if (!stripeKey || !priceId) {
+      return jsonError("Server not configured: STRIPE_SECRET_KEY, STRIPE_PRICE_ID", 500);
+    }
 
-    // Build success/cancel (propagate Gmail "back" if safe)
+    const stripe = new Stripe(stripeKey);
+
+    // Build success/cancel URLs (propagate Gmail thread + account)
     const success = new URL("/api/stripe/success", origin);
-    const cancel  = new URL("/api/stripe/canceled", origin);
+    const cancel  = new URL("/api/stripe/cancel",  origin); // ← **/cancel** (not “canceled”)
+
     if (back && isSafeGmailUrl(back)) {
       success.searchParams.set("back", back);
       cancel.searchParams.set("back", back);
     }
+    // carry the Gmail account so success/cancel can enforce authuser
+    success.searchParams.set("u", email);
+    cancel.searchParams.set("u", email);
 
     // Reuse or create customer
     let customer = await findCustomerByEmail(stripe, email);
@@ -118,14 +126,13 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Guard: if already trialing/active, don't create another subscription
+    // If already usable, don't create a new Checkout — just bounce to success
     if (await hasUsableSubscription(stripe, customer.id)) {
-      // Optional: mark that we short-circuited
       success.searchParams.set("already", "1");
       return NextResponse.redirect(success.toString(), { status: 303 });
     }
 
-    // Code-driven trial (no trial needed on the Price)
+    // Optional code-driven trial (no trial on the Price itself required)
     const trialDays = Number(process.env.STRIPE_TRIAL_DAYS ?? "7");
     const subscriptionData: Stripe.Checkout.SessionCreateParams.SubscriptionData =
       trialDays > 0
@@ -147,8 +154,8 @@ export async function GET(req: NextRequest) {
       subscription_data: subscriptionData,
     };
 
-    // Idempotency: prevents repeated clicks from creating multiple sessions
-    const idempotencyKey = `gmail:${email}:${priceId}`;
+    // Idempotency per click (use ts from Apps Script so repeats make a new session)
+    const idempotencyKey = `gmail:${email}:${priceId}:${ts}`;
 
     const session = await stripe.checkout.sessions.create(params, { idempotencyKey });
 
