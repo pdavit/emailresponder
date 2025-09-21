@@ -1,24 +1,25 @@
+// src/app/api/stripe/success/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 function isSafeGmailUrl(url: string) {
   return /^https:\/\/mail\.google\.com\//.test(url);
 }
 
 export async function GET(req: NextRequest) {
-  const origin = (process.env.APP_ORIGIN ?? "").trim();
-  const back = new URL(req.url).searchParams.get("back") || "";
+  const origin   = (process.env.APP_ORIGIN || "").trim() || "https://app.skyntco.com";
+  const url      = new URL(req.url);
+  const back     = (url.searchParams.get("back") || "").trim();
+  const already  = url.searchParams.get("already"); // optional, harmless
 
-  // Prefer jumping straight back to the Gmail thread that started checkout.
+  // If we have a safe Gmail link, send the user *back to Gmail*.
   if (back && isSafeGmailUrl(back)) {
-    return NextResponse.redirect(back, { status: 302 });
+    return NextResponse.redirect(back, { status: 303 });
   }
 
-  // Fallback: land in the app with a “success” hint.
-  return NextResponse.redirect(`${origin}/emailresponder?checkout=success`, {
-    status: 302,
-  });
+  // Fallback: send to your web app success page (keeps existing behavior when no back is available)
+  const fallback = `${origin}/emailresponder?checkout=success${already ? "&already=1" : ""}`;
+  return NextResponse.redirect(fallback, { status: 303 });
 }
