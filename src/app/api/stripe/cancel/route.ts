@@ -4,27 +4,40 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// ✅ Real regex literal (no quotes)
-function isSafeGmailUrl(url: string) {
+/** Convert a Gmail permalink (even print view) into the normal Gmail UI URL. */
+function toGmailUiUrl(back: string): string | null {
   try {
-    return new URL(url).origin === "https://mail.google.com";
+    const u = new URL(back);
+    if (u.hostname !== "mail.google.com") return null;
+
+    const authuser = u.searchParams.get("authuser") || "";
+    const threadId = u.searchParams.get("th"); // present on print/permalink links
+
+    // If the hash already points to UI (#inbox/#all), keep it.
+    if (u.hash && /#(inbox|all)\//.test(u.hash)) {
+      return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}${u.hash}`;
+    }
+
+    // Otherwise build a canonical UI URL with the thread id if we have it.
+    if (threadId) {
+      return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}#all/${threadId}`;
+    }
+
+    // Fallback: user’s inbox UI
+    return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}#inbox`;
   } catch {
-    return false;
+    return null;
   }
 }
+
 export async function GET(req: NextRequest) {
   const back = new URL(req.url).searchParams.get("back") || "";
 
-  // If we have a safe Gmail URL, send them straight back to that thread
-  if (back && isSafeGmailUrl(back)) {
-    return NextResponse.redirect(back, { status: 302 });
+  const ui = toGmailUiUrl(back);
+  if (ui) {
+    return NextResponse.redirect(ui, { status: 302 });
   }
 
-  // Fallback: tiny HTML telling the user to close the tab and return to Gmail
-  return new NextResponse(
-    `<!doctype html><meta charset="utf-8">
-     <title>Checkout canceled</title>
-     <p>Checkout canceled. You can close this tab and return to Gmail.</p>`,
-    { headers: { "content-type": "text/html; charset=utf-8" } }
-  );
+  // Last resort: just land in Gmail
+  return NextResponse.redirect("https://mail.google.com/mail/", { status: 302 });
 }

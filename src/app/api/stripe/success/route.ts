@@ -1,23 +1,45 @@
 // app/api/stripe/success/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-function isSafeGmailUrl(url: string) {
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+/** Build a canonical Gmail UI URL from a Gmail permalink (even if it's view=pt). */
+function toGmailUiUrl(back: string): string | null {
   try {
-    return new URL(url).origin === "https://mail.google.com";
+    const u = new URL(back);
+    if (u.hostname !== "mail.google.com") return null;
+
+    const authuser = u.searchParams.get("authuser") || "";
+    const threadId = u.searchParams.get("th"); // present on print/permalink URLs
+
+    // If there's already a UI hash like #inbox/<id> or #all/<id>, preserve it.
+    if (u.hash && /#(inbox|all)\//.test(u.hash)) {
+      return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}${u.hash}`;
+    }
+
+    // If we have the thread id from the querystring, build a canonical UI link.
+    if (threadId) {
+      // You can use "inbox" if you prefer; "all" is more resilient.
+      return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}#all/${threadId}`;
+    }
+
+    // Fallback: just go to the user's inbox UI
+    return `https://mail.google.com/mail/?authuser=${encodeURIComponent(authuser)}#inbox`;
   } catch {
-    return false;
+    return null;
   }
-}export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const back = searchParams.get("back") || "";
-  if (back && isSafeGmailUrl(back)) {
-    return NextResponse.redirect(back, { status: 302 });
+}
+
+export async function GET(req: NextRequest) {
+  const back = new URL(req.url).searchParams.get("back") || "";
+
+  const ui = toGmailUiUrl(back);
+  if (ui) {
+    return NextResponse.redirect(ui, { status: 302 });
   }
-  // Fallback: tiny HTML with a button back to Gmail if we didn’t get a safe URL
-  return new NextResponse(
-    `<!doctype html><meta charset="utf-8">
-     <title>Success</title>
-     <p>Subscription active. You can close this tab.</p>`,
-    { headers: { "content-type": "text/html; charset=utf-8" } }
-  );
+
+  // Last resort: land on Gmail (no thread context)
+  return NextResponse.redirect("https://mail.google.com/mail/", { status: 302 });
 }
