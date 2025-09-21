@@ -1,25 +1,23 @@
-// src/app/api/stripe/success/route.ts
+// app/api/stripe/success/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 function isSafeGmailUrl(url: string) {
-  return /^https:\/\/mail\.google\.com\//.test(url);
-}
-
-export async function GET(req: NextRequest) {
-  const origin   = (process.env.APP_ORIGIN || "").trim() || "https://app.skyntco.com";
-  const url      = new URL(req.url);
-  const back     = (url.searchParams.get("back") || "").trim();
-  const already  = url.searchParams.get("already"); // optional, harmless
-
-  // If we have a safe Gmail link, send the user *back to Gmail*.
-  if (back && isSafeGmailUrl(back)) {
-    return NextResponse.redirect(back, { status: 303 });
+  try {
+    return new URL(url).origin === "https://mail.google.com";
+  } catch {
+    return false;
   }
-
-  // Fallback: send to your web app success page (keeps existing behavior when no back is available)
-  const fallback = `${origin}/emailresponder?checkout=success${already ? "&already=1" : ""}`;
-  return NextResponse.redirect(fallback, { status: 303 });
+}export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const back = searchParams.get("back") || "";
+  if (back && isSafeGmailUrl(back)) {
+    return NextResponse.redirect(back, { status: 302 });
+  }
+  // Fallback: tiny HTML with a button back to Gmail if we didn’t get a safe URL
+  return new NextResponse(
+    `<!doctype html><meta charset="utf-8">
+     <title>Success</title>
+     <p>Subscription active. You can close this tab.</p>`,
+    { headers: { "content-type": "text/html; charset=utf-8" } }
+  );
 }
