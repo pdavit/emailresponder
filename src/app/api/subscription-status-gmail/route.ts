@@ -7,72 +7,63 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/* ------------------------------ helpers ------------------------------ */
-
 function jsonError(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-function verifyHmac(email: string, ts: string, sig: string, secret: string) {
-  const tsNum = parseInt(ts, 10);
-  if (!Number.isFinite(tsNum)) return false;
-  const age = Math.floor(Date.now() / 1000) - tsNum;
-  if (age < 0 || age > 300) return false;
-
-  const expected = crypto.createHmac("sha256", secret).update(`${email}|${ts}`).digest("hex");
+function timingSafeHexEqual(aHex: string, bHex: string) {
   try {
-    const a = Buffer.from(expected, "hex");
-    const b = Buffer.from(sig, "hex");
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
+    const a = Buffer.from(aHex, "hex");
+    const b = Buffer.from(bHex, "hex");
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
 
-// TS-safe because Stripe’s types for period end vary across versions
-function getPeriodEnd(sub: Stripe.Subscription): number | null {
-  const s: any = sub as any;
-  const v =
-    s.current_period_end ??
-    s.currentPeriodEnd ??
-    s.trial_end ??
-    s.trialEnd ??
-    null;
+function verifyHmac(email: string, ts: string, sig: string, secret: string) {
+  const tsNum = parseInt(ts, 10);
+  if (!Number.isFinite(tsNum)) return { ok: false, reason: "bad_ts" };
 
-  if (!v) return null;
-  return typeof v === "number" ? v : Math.floor(new Date(v).getTime() / 1000);
+  // Allow up to ±10 minutes of skew to be generous with Apps Script.
+  const now = Math.floor(Date.now() / 1000);
+  const skew = Math.abs(now - tsNum);
+  if (skew > 600) return { ok: false, reason: "ts_skew" };
+
+  const expectedHex = crypto.createHmac("sha256", secret)
+    .update(`${email}|${ts}`)
+    .digest("hex");
+
+  if (!timingSafeHexEqual(expectedHex, sig)) {
+    return { ok: false, reason: "sig_mismatch" };
+  }
+  return { ok: true as const, reason: "ok" };
 }
 
-async function findCustomersByEmail(stripe: Stripe, email: string): Promise<Stripe.Customer[]> {
-  const map: Record<string, Stripe.Customer> = {};
+async function findCustomerByEmail(stripe: Stripe, email: string) {
+  // 1) Quick list by email (works on all accounts)
+  const list = await stripe.customers.list({ email, limit: 5 });
+  if (list.data.length) return list.data[0];
 
-  // 1) quick path
-  const list = await stripe.customers.list({ email, limit: 100 });
-  for (const c of list.data) map[c.id] = c;
-
-  // 2) robust path (may not be enabled on all accounts)
+  // 2) Robust search (if enabled on the account); also check metadata.gmailEmail
   try {
-    const query = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
-    const found = await stripe.customers.search({ query, limit: 100 });
-    for (const c of found.data) map[c.id] = c;
+    const q = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
+    const search = await stripe.customers.search({ query: q, limit: 5 });
+    if (search.data.length) return search.data[0];
   } catch {
-    /* ignore if search disabled */
+    /* ignore if search not enabled */
   }
 
-  return Object.values(map);
-}
-
-/* -------------------------------- routes -------------------------------- */
-
-export async function GET() {
-  // simple health check
-  return NextResponse.json({ ok: true });
+  return null;
 }
 
 export async function POST(req: NextRequest) {
   const stripeKey = (process.env.STRIPE_SECRET_KEY || "").trim();
-  const secret = (process.env.ER_SHARED_SECRET || "").trim();
-  if (!stripeKey || !secret) return jsonError("Server not configured", 500);
+  const shared = (process.env.ER_SHARED_SECRET || "").trim();
+  const allowIncomplete = (process.env.ER_COUNT_INCOMPLETE_AS_ACTIVE || "").trim() === "1";
+
+  if (!stripeKey || !shared) return jsonError("Server not configured", 500);
 
   let body: { email?: string; ts?: string; sig?: string } = {};
   try {
@@ -81,52 +72,65 @@ export async function POST(req: NextRequest) {
     return jsonError("Invalid JSON");
   }
 
-  const email = (body.email || "").toString().trim().toLowerCase();
-  const ts = (body.ts || "").toString();
-  const sig = (body.sig || "").toString();
+  const email = String(body.email || "").trim().toLowerCase();
+  const ts = String(body.ts || "");
+  const sig = String(body.sig || "");
+
   if (!email || !ts || !sig) return jsonError("Missing fields");
-  if (!verifyHmac(email, ts, sig, secret)) return jsonError("Bad signature", 401);
 
-  const stripe = new Stripe(stripeKey);
-  const keyMode = stripeKey.startsWith("sk_live_") ? "live" : (stripeKey.startsWith("sk_test_") ? "test" : "unknown");
-
-  const customers = await findCustomersByEmail(stripe, email);
-
-  const statuses: Array<{
-    id: string;
-    status: Stripe.Subscription.Status | string;
-    current_period_end: number | null;
-    cancel_at_period_end: boolean;
-    customerId: string;
-  }> = [];
-
-  for (const cust of customers) {
-    const subs = await stripe.subscriptions.list({
-      customer: cust.id,
-      status: "all",
-      limit: 100,
-    });
-    for (const s of subs.data) {
-      statuses.push({
-        id: s.id,
-        status: s.status,
-        current_period_end: getPeriodEnd(s),
-        cancel_at_period_end: !!(s as any).cancel_at_period_end,
-        customerId: cust.id,
-      });
-    }
+  const hv = verifyHmac(email, ts, sig, shared);
+  if (!hv.ok) {
+    console.log(`[status] bad signature`, { email, reason: hv.reason });
+    return jsonError("Unauthorized", 401);
   }
 
-  // Consider these as “active enough” for Gmail usage
-  const ACTIVE = new Set<Stripe.Subscription.Status | string>(["trialing", "active", "past_due"]);
-  const active = statuses.some((s) => ACTIVE.has(s.status));
+  const stripe = new Stripe(stripeKey);
+  const customer = await findCustomerByEmail(stripe, email);
 
-  // Helpful debug information — safe to keep while we test.
-  return NextResponse.json({
-    active,
+  if (!customer) {
+    console.log(`[status] no_customer`, { email });
+    return NextResponse.json({
+      active: false,
+      reason: "no_customer",
+      statuses: [],
+    });
+  }
+
+  // Pull recent subs for this customer
+  const subs = await stripe.subscriptions.list({
+    customer: customer.id,
+    status: "all",
+    limit: 10,
+  });
+
+  // Snapshot for troubleshooting (avoid TS complaining about shapes)
+  const statuses = subs.data.map((s: any) => ({
+    id: s.id,
+    status: s.status,
+    current_period_end: s.current_period_end ?? null,
+    cancel_at_period_end: !!s.cancel_at_period_end,
+  }));
+
+  const ACTIVE = new Set<string>(["trialing", "active", "past_due"]);
+  if (allowIncomplete) ACTIVE.add("incomplete"); // opt-in via env if you want
+
+  const hasActive = statuses.some((s) => ACTIVE.has(String(s.status)));
+
+  console.log(`[status] result`, {
     email,
-    mode: keyMode,                  // <-- "live" or "test"
-    customerCount: customers.length,
-    statuses,                       // list of subs we saw
-  }, { headers: { "cache-control": "no-store" } });
+    customerId: customer.id,
+    hasActive,
+    statuses: statuses.map((s) => `${s.id}:${s.status}`),
+  });
+
+  return NextResponse.json({
+    active: hasActive,
+    reason: hasActive ? "ok" : "no_active_subscriptions",
+    statuses,
+  });
+}
+
+// Health check (handy for quick pings)
+export async function GET() {
+  return NextResponse.json({ ok: true });
 }
