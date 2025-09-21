@@ -26,35 +26,48 @@ function verifyHmac(email: string, ts: string, sig: string, secret: string) {
   const tsNum = parseInt(ts, 10);
   if (!Number.isFinite(tsNum)) return { ok: false, reason: "bad_ts" };
 
-  // Allow up to ±10 minutes of skew to be generous with Apps Script.
+  // generous skew for Apps Script
   const now = Math.floor(Date.now() / 1000);
-  const skew = Math.abs(now - tsNum);
-  if (skew > 600) return { ok: false, reason: "ts_skew" };
+  if (Math.abs(now - tsNum) > 600) return { ok: false, reason: "ts_skew" };
 
-  const expectedHex = crypto.createHmac("sha256", secret)
-    .update(`${email}|${ts}`)
-    .digest("hex");
-
-  if (!timingSafeHexEqual(expectedHex, sig)) {
-    return { ok: false, reason: "sig_mismatch" };
-  }
+  const expected = crypto.createHmac("sha256", secret).update(`${email}|${ts}`).digest("hex");
+  if (!timingSafeHexEqual(expected, sig)) return { ok: false, reason: "sig_mismatch" };
   return { ok: true as const, reason: "ok" };
 }
 
 async function findCustomerByEmail(stripe: Stripe, email: string) {
-  // 1) Quick list by email (works on all accounts)
+  // 1) Plain list by email (works everywhere)
   const list = await stripe.customers.list({ email, limit: 5 });
   if (list.data.length) return list.data[0];
 
-  // 2) Robust search (if enabled on the account); also check metadata.gmailEmail
+  // 2) Search API (if enabled) – also check metadata.gmailEmail
   try {
     const q = `email:'${email}' OR metadata['gmailEmail']:'${email}'`;
     const search = await stripe.customers.search({ query: q, limit: 5 });
     if (search.data.length) return search.data[0];
   } catch {
-    /* ignore if search not enabled */
+    /* ignore if not enabled */
   }
 
+  return null;
+}
+
+// NEW: fallback via recent Checkout Sessions with client_reference_id="gmail:<email>"
+async function findCustomerViaCheckout(stripe: Stripe, email: string) {
+  try {
+    const sessions = await stripe.checkout.sessions.list({ limit: 50 }); // small scan of recent
+    const hit = sessions.data.find(
+      (s) =>
+        s.client_reference_id === `gmail:${email}` &&
+        typeof s.customer === "string"
+    );
+    if (hit && typeof hit.customer === "string") {
+      const cust = await stripe.customers.retrieve(hit.customer);
+      if (!("deleted" in cust) || !cust.deleted) return cust as Stripe.Customer;
+    }
+  } catch {
+    // ignore
+  }
   return null;
 }
 
@@ -66,44 +79,39 @@ export async function POST(req: NextRequest) {
   if (!stripeKey || !shared) return jsonError("Server not configured", 500);
 
   let body: { email?: string; ts?: string; sig?: string } = {};
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError("Invalid JSON");
-  }
+  try { body = await req.json(); } catch { return jsonError("Invalid JSON"); }
 
   const email = String(body.email || "").trim().toLowerCase();
   const ts = String(body.ts || "");
   const sig = String(body.sig || "");
-
   if (!email || !ts || !sig) return jsonError("Missing fields");
 
   const hv = verifyHmac(email, ts, sig, shared);
   if (!hv.ok) {
-    console.log(`[status] bad signature`, { email, reason: hv.reason });
+    console.log("[status] bad signature", { email, reason: hv.reason });
     return jsonError("Unauthorized", 401);
   }
 
   const stripe = new Stripe(stripeKey);
-  const customer = await findCustomerByEmail(stripe, email);
 
+  // Find the customer
+  let customer = await findCustomerByEmail(stripe, email);
   if (!customer) {
-    console.log(`[status] no_customer`, { email });
-    return NextResponse.json({
-      active: false,
-      reason: "no_customer",
-      statuses: [],
-    });
+    customer = await findCustomerViaCheckout(stripe, email);
   }
 
-  // Pull recent subs for this customer
+  if (!customer) {
+    console.log("[status] no_customer", { email });
+    return NextResponse.json({ active: false, reason: "no_customer", statuses: [] });
+  }
+
+  // Pull latest subscriptions for that customer
   const subs = await stripe.subscriptions.list({
     customer: customer.id,
     status: "all",
-    limit: 10,
+    limit: 20,
   });
 
-  // Snapshot for troubleshooting (avoid TS complaining about shapes)
   const statuses = subs.data.map((s: any) => ({
     id: s.id,
     status: s.status,
@@ -112,11 +120,11 @@ export async function POST(req: NextRequest) {
   }));
 
   const ACTIVE = new Set<string>(["trialing", "active", "past_due"]);
-  if (allowIncomplete) ACTIVE.add("incomplete"); // opt-in via env if you want
+  if (allowIncomplete) ACTIVE.add("incomplete");
 
   const hasActive = statuses.some((s) => ACTIVE.has(String(s.status)));
 
-  console.log(`[status] result`, {
+  console.log("[status] result", {
     email,
     customerId: customer.id,
     hasActive,
@@ -130,7 +138,6 @@ export async function POST(req: NextRequest) {
   });
 }
 
-// Health check (handy for quick pings)
 export async function GET() {
   return NextResponse.json({ ok: true });
 }
